@@ -1,0 +1,725 @@
+#!/usr/bin/env python3
+# The MIT License (MIT)
+#
+# Copyright (c) 2016 Marc Meadows
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+"""
+    raspbian-qemu - Handy tool for non-privileged manipulation and
+                    qemu-emulation of Raspbian images.
+"""
+
+import argparse
+import contextlib
+import io
+import fnmatch
+import os
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.request
+
+__version__ = "0.0.9"
+
+PARTED    = "parted"            # partition editor
+RESIZE2FS = "resize2fs"         # file system resizier
+E2FSCK    = "e2fsck"            # file system checker
+DEBUGFS   = "debugfs"           # file system manipulator
+QEMU      = "qemu-system-arm"   # hardware emulator
+MAKE      = "make"              # project builder
+PATCH     = "patch"             # patcher
+
+KERNEL_BINARY = "kernel-qemu"
+
+def run(cmd, input=None):
+    """Run cmd, feeding it input (if any) and capturing stdout and stderr.
+       Raises CalledProcessError if the return code is non-zero."""
+    kwargs = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+    }
+    if input:
+        kwargs["stdin"] = subprocess.PIPE
+
+    if run.debug:
+        print("cmd:", " ".join(cmd), repr(input))
+
+    with subprocess.Popen(cmd, **kwargs) as process:
+        try:
+            stdout, stderr = process.communicate(input)
+        except:
+            process.kill()
+            process.wait()
+            raise
+        retcode = process.poll()
+        if retcode:
+            e = subprocess.CalledProcessError(retcode, process.args,
+                                              output=stdout, stderr=stderr)
+            if run.debug:
+                print(e, e.stdout, e.stderr)
+            raise e
+    if run.debug and stderr:
+        print("stderr:", stderr)
+    return stdout
+run.debug = False
+
+def resolve_suffix(suffixed):
+    """Given a suffixed value, return an appropriate integer.
+         * None will return None,
+         * An int will return the same int.
+         * A string without a suffix will return an int of that string.
+         * A string with a suffix of K/M/G will multiply out the base by the
+           appropriate unit.
+       Suffix is case-insensitive.
+    """
+    if suffixed is not None:
+        try:
+            suffixed = int(suffixed)
+        except ValueError:
+            unit_multiplier = {"K": 1024,
+                               "M": 1024**2,
+                               "G": 1024**3}[suffixed[-1].upper()]
+            suffixed = int(suffixed[:-1]) * unit_multiplier
+    return suffixed
+
+def data_copy(source, dest, source_offset=0, dest_offset=0, count=None):
+    """Copy count bytes from file source to file dest, optionally
+    skipping source_offset/dest_offset bytes respectively."""
+    count = resolve_suffix(count)
+    if source == dest and count is None and dest_offset:
+        count = os.path.getsize(source) - source_offset
+    dest_mode = "r+b" if os.path.exists(dest) else "wb"
+    with io.open(source, "rb", 0) as source_file, \
+         io.open(dest, dest_mode, 0) as dest_file:
+
+        source_file.seek(source_offset, io.SEEK_CUR)
+        dest_file.seek(dest_offset, io.SEEK_CUR)
+
+        buf = bytearray(4 * 1024 * 1024)
+        while count is None or count:
+            read_count = source_file.readinto(buf)
+            if not read_count:
+                break
+
+            write_count = read_count
+            if count is not None:
+                write_count = min(write_count, count)
+                count -= write_count
+
+            if write_count < len(buf):
+                dest_file.write(buf[:write_count])
+            else:
+                dest_file.write(buf)
+
+        dest_file.truncate(dest_file.tell())
+
+class FilesystemImage:
+    """Wrapper around debugfs to expose operations on an ext[234] filesystem
+    image."""
+    def __init__(self, image):
+        """Create wrapper for image file image."""
+        self.image = image
+
+    def cat(self, filespec):
+        """Return the contents of filespec."""
+        return run([DEBUGFS, self.image,"-R", "cat " + filespec])
+
+    def rm(self, filespec):
+        """Remove the file filespec."""
+        return run([DEBUGFS, "-w", self.image,"-R", "rm " + filespec])
+
+    def ls(self, path, filename_match="*"):
+        """Return a list of TarInfo objects for the files in path."""
+        lines = run([DEBUGFS, self.image,"-R", "ls -p " + path]).splitlines()
+        for line in lines:
+            if not line:
+                continue
+            ignore, inode, iflags, uid, gid, filename, size, ignore = line.split(b"/", maxsplit=7)
+            file = tarfile.TarInfo(filename.decode())
+            iflags = int(iflags, 8)
+            if iflags & 0x8000:
+                file.type = tarfile.REGTYPE
+            elif iflags & 0x4000:
+                file.type = tarfile.DIRTYPE
+            else:
+                print("%4X" % (iflags,))
+                raise NotImplementedError
+            file.mode = iflags & 0x01FF
+            file.uid = int(uid)
+            file.gid = int(gid)
+            if size:
+                file.size = int(size)
+            if filename not in (b".", b"..") \
+               and fnmatch.fnmatch(file.name, filename_match):
+                yield file
+
+    def setstat(self, filespec, uid=None, gid=None, mode=None, directory=False):
+        """Set any combination of uid, gid, and mode for file filespec.  If
+        filespec represents a directory, directory must be passed in as True."""
+        debugfs_cmds = []
+        if uid is not None:
+            debugfs_cmds.append("set_inode_field " + " ".join([filespec, "uid", str(uid)]))
+        if gid is not None:
+            debugfs_cmds.append("set_inode_field " + " ".join([filespec, "gid", str(gid)]))
+        if mode is not None:
+            if directory:
+                i_mode = 0x4000 | mode
+            else:
+                i_mode = 0x8000 | mode
+            debugfs_cmds.append("set_inode_field " + " ".join([filespec, "mode", str(i_mode)]))
+
+        if debugfs_cmds:
+            debugfs_cmds = "\n".join(debugfs_cmds)
+
+            run([DEBUGFS, "-w", self.image, "-f", "-"], input=debugfs_cmds.encode())
+
+    def mkdir(self, filespec, uid=None, gid=None, mode=None):
+        """Make a directory filespec with optional stats."""
+        run([DEBUGFS, "-w", self.image, "-R", "mkdir " + filespec])
+        self.setstat(filespec, uid, gid, mode, directory=True)
+
+    def write(self, filespec, contents, uid=None, gid=None, mode=None):
+        """Write contents to the file filespec with optional stats."""
+        directory = os.path.dirname(filespec)
+        filename  = os.path.basename(filespec)
+
+        with tempfile.NamedTemporaryFile() as inject:
+            inject.write(contents)
+            inject.flush()
+            #NOTE: rm of a missing file is a NOP and it's required for
+            #      overwriting.
+            debugfs_cmds = ["cd " + directory,
+                            "rm " + filename,
+                            "write " + inject.name + " "+ filename,
+                           ]
+            debugfs_cmds = "\n".join(debugfs_cmds)
+
+            run([DEBUGFS, "-w", self.image, "-f", "-"], input=debugfs_cmds.encode())
+        self.setstat(filespec, uid, gid, mode)
+
+@contextlib.contextmanager
+def umask(mask):
+    """Context manager which sets umask to mask for its duration and then
+    restores the previous mask."""
+    saved_mask = os.umask(mask)
+    yield
+    os.umask(saved_mask)
+
+@contextlib.contextmanager
+def root_parition(source_image, dest_image=None, *, read_only=False, keep_root=False):
+    """Context manager which extracts the root partition of a raspbian
+    dest_image into a temporary file, yields the filename, and then --
+    if read_only is False, creates a copy of the raspbian dest_image with
+    the root partition replaced."""
+    if dest_image is None:
+        dest_image = source_image
+
+    # Find the start of the root partition, which we assume is the last
+    # and second partition.
+    partitions = run([PARTED, "-m", source_image, "--", "unit", "B", "print"])
+
+    root_parition_desc = partitions.decode().splitlines()[-1]
+    assert root_parition_desc.startswith("2:"), "Unexpected partition layout."
+
+    # 2:70254592B:1387266047B:1317011456B:ext4::;
+    #   ^^^^^^^^
+    root_start = int(root_parition_desc.split(":")[1][:-1])
+
+    with open("root.img", "wb") if keep_root \
+         else tempfile.NamedTemporaryFile() as root_image:
+        # Extract the root partition to the file root_image
+        data_copy(source_image, root_image.name, source_offset=root_start)
+
+        yield root_image.name
+
+        if read_only:
+            return
+
+        # Copy everything before the root partition from the source, then
+        # append the altered root partition.  No need to copy if we"re
+        # injecting a new root into the src.
+        if source_image != dest_image:
+            data_copy(source_image, dest_image, count=root_start)
+        data_copy(root_image.name, dest_image, dest_offset=root_start)
+
+    # Resize after reinjecting so parted will do all the math for us.
+    # NOTE: The unit s on the -1s is IMPORTANT.
+    run([PARTED, dest_image, "--", "resizepart", "2", "-1s"])
+
+def prep(source_image, dest_image, grow_root, public_key, hosts_keys, keep_root):
+    """Prep an image for use in qemu starting with source_image and writing
+    out dest_image (they may be the same).
+    Optionally:
+        - grow the root partition by grow_root bytes
+        - add a public key to the user pi's authorized_keys
+        - add the hostkeys from a previously extracted tarball
+    """
+    with root_parition(source_image, dest_image, keep_root=keep_root) as root_image:
+        # Grow the root partition
+        if grow_root:
+            with open(root_image, "ab") as rootfile:
+                rootfile.seek(0, io.SEEK_END)
+                rootfile.truncate(rootfile.tell() + resolve_suffix(grow_root))
+
+        # Resize the filesystem to the new size and check it.
+        # resize2fs requires the last fsck to be after the last mount,
+        # so fsck it first, but assume everything will go well since the
+        # image should be valid.
+        # The fsck after the resize is run read-only and is intended to
+        # blow up the script if the resize caused damage of any sort.
+        run([E2FSCK, "-p", "-f", root_image])
+        run([RESIZE2FS, root_image])
+        run([E2FSCK, "-n", "-f", root_image])
+
+        rootfs = FilesystemImage(root_image)
+
+        # http://embedonix.com/articles/linux/emulating-raspberry-pi-on-linux/
+        rootfs.write("/etc/udev/rules.d/90-qemu-sda.rules",
+                     b'KERNEL=="sda", SYMLINK+="mmcblk0"\n'
+                     b'KERNEL=="sda?", SYMLINK+="mmcblk0p%n"\n'
+                     b'KERNEL=="sda2", SYMLINK+="root"\n"')
+
+        # Comment out all lines in ld.so.preload
+        preload = rootfs.cat("/etc/ld.so.preload")
+        preload = b"".join([line if line.startswith(b"#") else b"#" + line
+                            for line in preload.splitlines(keepends=True)
+                           ])
+        rootfs.write("/etc/ld.so.preload",
+                     preload, uid=0, gid=0, mode=0o644)
+
+        if public_key is not None:
+            AUTHORIZED_KEYS = "/home/pi/.ssh/authorized_keys"
+            new_key = open(public_key, "rb").read()
+            keys = rootfs.cat(AUTHORIZED_KEYS)
+            if new_key not in keys:
+                keys += new_key
+            rootfs.mkdir("/home/pi/.ssh", uid=1000, gid=1000, mode=0o700)
+            rootfs.write(AUTHORIZED_KEYS, keys, uid=1000, gid=1000, mode=0o600)
+
+        if hosts_keys is not None:
+            # Inject all of the host keys from the tarfile into the image
+            # in /etc/ssh.  Then alter the initscript not to regenerate them
+            # but leave the script there since it also enables ssh and self-
+            # destructs.
+            with tarfile.open(hosts_keys, "r") as tar:
+                for member in tar:
+                    hostkey = tar.extractfile(member)
+                    rootfs.write(os.path.join("/etc/ssh/", member.name),
+                                 hostkey.read(),
+                                 uid=member.uid, gid=member.gid,
+                                 mode=member.mode)
+
+            REGEN_HOSTKEYS_INITSCRIPT = "/etc/init.d/regenerate_ssh_host_keys"
+            initscript = rootfs.cat(REGEN_HOSTKEYS_INITSCRIPT)
+            initscript = b"".join([line for line in initscript.splitlines(keepends=True)
+                                   if b"ssh-keygen" not in line
+                                  ])
+            rootfs.write(REGEN_HOSTKEYS_INITSCRIPT, initscript,
+                         uid=0, gid=0, mode=0o755)
+
+def unprep(source_image, dest_image, keep_root):
+    """Un-Prep source_image and write it to dest_image (the maybe be the same)
+    so the image can then be written to an SD card and run on actual Raspberry
+    Pi hardware again.
+    NOTE: This does not undo any private or host keys added with prep.
+    """
+    with root_parition(source_image, dest_image, keep_root=keep_root) as root_image:
+        rootfs = FilesystemImage(root_image)
+
+        rootfs.rm("/etc/udev/rules.d/90-qemu-sda.rules")
+
+        # Uncomment all lines in ld.so.preload
+        preload = rootfs.cat("/etc/ld.so.preload")
+        preload = b"".join([line.lstrip(b"#")
+                            for line in preload.splitlines(keepends=True)])
+        rootfs.write("/etc/ld.so.preload", preload, uid=0, gid=0, mode=0o644)
+
+def run_image(image, display, audio, ssh_port, promptfunc):
+    """Run an image, in qemu-system-arm.
+    Optionally with a display window and/or an ssh port redirect."""
+    args = [QEMU,
+
+            "-kernel", KERNEL_BINARY,
+            "-append", "console=ttyAMA0,115200 root=/dev/sda2 rootfstype=ext4 rw",
+
+            # As of mid-2016 qemu does not have a direct raspi machine.  This
+            # is the closest to it with the caveat that the versatilepb
+            # hardware has a max of 256M of RAM, so we're limited to that for
+            # now.
+            "-machine", "versatilepb",
+            "-cpu", "arm1176",
+            "-m", "256",
+
+            # Send the serial (and thus the console) to stdout
+            # but multiplex it with the monitor so Ctrl-A c will
+            # enter the monitor and Ctrl-C will go to the guest
+            # instead of interrupting qemu itself.
+            "-serial", "mon:stdio",
+
+            # Use the raw raspibian image as the "SD card".  It's actually
+            # attached as a disk and we symlink /dev/mmcblk0 to /dev/sda
+            # in the udev rules set in prep.
+            "-drive", "file=" + image + ",index=0,media=disk,format=raw",
+           ]
+
+    hostfwd=",hostfwd=tcp:127.0.0.1:%d-:22" % (ssh_port) if ssh_port else ""
+    args += ["-net", "type=user,id=user.0" + hostfwd,
+             "-net", "type=nic,id=smc91c111.0,model=smc91c111",
+            ]
+
+    if not display:
+        args += ["-display", "none"]
+
+    if not audio:
+        os.environ["QEMU_AUDIO_DRV"] = "none"
+
+    promptfunc()
+    os.execvp(QEMU, args)
+
+def extract(source_image, what, dest, keep_root=False):
+    """Extract data from source_image into file dest.
+    Data extracted is chosen by what, which can be:
+        - "hostkeys" to extract all ssh host keys into a tarfile.
+    """
+    with root_parition(source_image, read_only=True, keep_root=keep_root) as root_image:
+        rootfs = FilesystemImage(root_image)
+
+        extracted = io.BytesIO()
+        if what == "hostkeys":
+            SSHDIR = "/etc/ssh/"
+            with tarfile.open(fileobj=extracted, mode="w") as tar:
+                tartime = time.time()
+                for member in rootfs.ls(SSHDIR, "ssh_host_*"):
+                    contents = rootfs.cat(os.path.join(SSHDIR, member.name))
+                    if member.size != len(contents):
+                        raise ValueError("debugfs: file size does not match"
+                                         " contents size for "
+                                         "" + os.path.join(SSHDIR, member.name))
+                    member.mtime = tartime
+                    tar.addfile(member, io.BytesIO(contents))
+
+                if not tar.getnames():
+                    raise FileNotFoundError("No host keys found in %s."
+                                            " Aborting." % (source_image,))
+        else:
+            raise NotImplementedError
+
+        open(dest, "wb").write(extracted.getvalue())
+
+@contextlib.contextmanager
+def in_directory(path):
+    """Context manager which changes to directory path and back to the
+    original directory on context close."""
+    current_path = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(current_path)
+
+ARM_PATCH_URL = "https://raw.githubusercontent.com/dhruvvyas90/qemu-rpi-kernel/master/tools/linux-arm.patch"
+def fetch_arm_patch(cachefilespec):
+    """Fetch the contents of a kernel patch which allows the ARM1176 processor
+    to be configured with the versatilepb board.
+
+    Will cache into cachefilespec, returning its contents if it exists.
+
+    Use version for 4.x at:
+      https://github.com/dhruvvyas90/qemu-rpi-kernel/blob/master/tools/linux-arm.patch
+
+    Cannot embed it here as its providence and license is unclear.
+    Trail includes:
+      https://www.raspberrypi.org/forums/viewtopic.php?f=2&t=4341
+      http://thoronir.net/raspi-dev/linux-arm.patch
+      https://gist.github.com/flatbird/fafb233f2843e99427e8
+      https://www.raspberrypi.org/forums/viewtopic.php?t=23046
+      https://web.archive.org/web/20120626224432/http://xecdesign.com/compiling-a-kernel/
+      https://github.com/rimmington/qemu-rpi-kernel/commit/162fbe91a1d1b11e34a3af9326e06816aac67e1f
+    """
+    if os.path.exists(cachefilespec):
+        return open(cachefilespec, "rb").read()
+    else:
+        with urllib.request.urlopen(ARM_PATCH_URL) as response:
+            patch = response.read()
+            with open(cachefilespec, "wb") as cachefile:
+                cachefile.write(patch)
+            return patch
+
+TOOLCHAIN="arm-linux-gnueabihf"
+
+CONFIGS = [
+    'CONFIG_CROSS_COMPILE="{toolchain}"'.format(toolchain=TOOLCHAIN),
+    "CONFIG_CPU_V6=y",
+    "CONFIG_ARM_ERRATA_411920=y",
+    "CONFIG_ARM_ERRATA_364296=y",
+    "CONFIG_AEABI=y",
+    "CONFIG_OABI_COMPAT=y",
+    "CONFIG_PCI=y",
+    "CONFIG_SCSI=y",
+    "CONFIG_SCSI_SYM53C8XX_2=y",
+    "CONFIG_BLK_DEV_SD=y",
+    "CONFIG_BLK_DEV_SR=y",
+    "CONFIG_DEVTMPFS=y",
+    "CONFIG_DEVTMPFS_MOUNT=y",
+    "CONFIG_TMPFS=y",
+    "CONFIG_INPUT_EVDEV=y",
+    "CONFIG_EXT3_FS=y",
+    "CONFIG_EXT4_FS=y",
+    "CONFIG_VFAT_FS=y",
+    "CONFIG_NLS_CODEPAGE_437=y",
+    "CONFIG_NLS_ISO8859_1=y",
+    "CONFIG_FONT_8x16=y",
+    "CONFIG_LOGO=y",
+    "CONFIG_VFP=y",
+    "CONFIG_CGROUPS=y",
+    # To make ttyAMA0 work.
+    # See https://github.com/dhruvvyas90/qemu-rpi-kernel/issues/7
+    "CONFIG_FHANDLE=y",
+
+    # Initramfs.  This is not actually needed, but makes the kernel a bit
+    # more flexible when trying out various arm machines in qemu.  So,
+    # keeping it in for handy experimentation.
+    "CONFIG_BLK_DEV_INITRD=y",
+    "CONFIG_INITRAMFS_SOURCE=""",
+    "CONFIG_INITRAMFS_ROOT_UID=0",
+    "CONFIG_INITRAMFS_ROOT_GID=0",
+
+    # Raspbian tries to load these modules, compile them into the kernel.
+    "CONFIG_IPV6=y",
+    "CONFIG_IPV6_SIT=y",                #?
+    "CONFIG_IPV6_NDISC_NODETYPE=y",     #?
+    "CONFIG_AUTOFS4_FS=y",
+]
+
+def build_kernel(linux_path):
+    """Given a checkout of https://github.com/raspberrypi/linux.git,
+    patch, configure, and build a kernel image that will boot the raspibian
+    distribution under qemu.
+
+    This function and some above variables based on:
+        https://github.com/dhruvvyas90/qemu-rpi-kernel/blob/master/tools/build-kernel-qemu
+    """
+    def make(target):
+        """Convenience function to run make with parallel and
+        cross-compile options."""
+        run([MAKE, "-j", "4",
+                   "ARCH=arm", "CROSS_COMPILE=" + TOOLCHAIN +"-", target])
+
+    with in_directory(linux_path):
+        arm_patch = fetch_arm_patch("raspbian-qemu-linux-arm.patch")
+        try:
+            run([PATCH, "-p1", "--forward", "--reject-file=-"],
+                input=arm_patch)
+        except subprocess.CalledProcessError:
+            # We might be double-patching the kernel in which case it will
+            # return non-zero.  So ignore that.
+            pass
+        make("distclean")
+        make("versatile_defconfig")
+        with open(".config", "a") as dotconfig:
+            for config in CONFIGS:
+                dotconfig.write(config)
+                dotconfig.write("\n")
+        make("olddefconfig")
+        make("bzImage")
+    data_copy(os.path.join(linux_path, "arch/arm/boot/zImage"), KERNEL_BINARY)
+
+def check_dependencies(dependencies):
+    """Check that all of the tools in dependencies are available.
+
+    Dependencies are checked below on a per-action basis so an action with its
+    dependencies met, can be used even if you don"t have the dependencies for
+    other actions.
+
+    This is redundant for a packaged install but allows the script to give
+    better error messages if the script is deployed without a package."""
+    missing = []
+    for tool in dependencies:
+        try:
+            # -h is just so no tool is called without an argument, it might
+            # cause an error message on many tools but they just need to exist.
+            subprocess.call([tool, "-h"],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+        except FileNotFoundError:
+            missing.append(tool)
+
+    for tool in missing:
+        print(tool, "is required, but missing.", file=sys.stderr)
+
+    if missing:
+        sys.exit("Aborting.")
+
+def check_image(image, *, check_write=False):
+    """Check that the image file exists and optinally if writeable."""
+    if not os.path.isfile(image):
+        sys.exit("ERROR: image %s not found. Aborting." % (image,))
+    if check_write and not os.access(image, os.W_OK):
+        sys.exit("ERROR: image %s is not writable. Aborting." % (image,))
+
+def check_public_key(public_key):
+    """Check that the public_key file exists."""
+    if public_key is None:
+        return
+
+    if not os.path.exists(public_key):
+        sys.exit("ERROR: public key %s not found. Aborting." % (public_key,))
+
+    with open(public_key) as keyfile:
+        if "PRIVATE KEY" in keyfile.read():
+            sys.exit("ERROR: public key %s appears to be a private key. Did you forget the .pub extension?  Aborting." % (public_key,))
+
+def check_host_keys(host_keys):
+    """Check the host key modes to make sure we're not injecting
+       a security hole.
+    """
+    if host_keys is None:
+        return
+
+    with tarfile.open(host_keys, "r") as tar:
+        for member in tar:
+            if member.uid != 0 or member.gid != 0:
+                sys.exit("ERROR: Refusing to inject host key"
+                         " %r with improper ownership of %d:%d."
+                         " Aborting." % (member.name, member.uid, member.gid))
+
+            if (member.name.endswith(".pub") and member.mode & 0o033) \
+               or (not member.name.endswith(".pub") and member.mode & 0o077):
+                sys.exit("ERROR: Refusing to inject host key"
+                         " %r with improper mode of %03o."
+                         " Aborting." % (member.name, member.mode))
+
+def check_kernel_source(source):
+    """Check that the kernel source directory exists, is in fact a directory,
+    and has at least a Makefile in it."""
+    if not os.path.isdir(source):
+        sys.exit("source must be a directory.")
+
+    if not os.path.exists(os.path.join(source, "Makefile")):
+        sys.exit("source doesn't seem to be a kernel checkout.")
+
+
+def main(argv):
+    """Command line argument parsing, checking, and dispatch."""
+    parser = argparse.ArgumentParser(prog=argv[0])
+
+    parser.add_argument("--version", action="version",
+                        version="%(prog)s " + __version__)
+    parser.add_argument("--debug", help="Enable extended debug output to stderr",
+                        action="store_true")
+    parser.add_argument("--script", help="Disable any user prompts and delays",
+                        action="store_true")
+    # Keep the extracted root parition for spelunking.
+    parser.add_argument("--keep-root", help=argparse.SUPPRESS,
+                        action="store_true")
+
+    action_parser = parser.add_subparsers(dest="action",
+                                          title="actions",
+                                          help="action help")
+    # http://bugs.python.org/issue9253#msg186387
+    action_parser.required = True
+
+    extract_parser = action_parser.add_parser("extract", help="Extract artifacts from a Raspbian image")
+    extract_parser.add_argument("image", help="Raspbian image to extract from.")
+    extract_parser.add_argument("what", help="What to extract from the image.",
+                                choices=("hostkeys",))
+    extract_parser.add_argument("dest", help="Optional name of file to extract to.")
+
+    prep_parser = action_parser.add_parser("prep", help="prep help")
+    prep_parser.add_argument("image", help="Raspbian image to prep to run in qemu.")
+    prep_parser.add_argument("dest", nargs="?", help="Optional name of new image.")
+    prep_parser.add_argument("--grow-root", help="How much space to add to the root partition.")
+    prep_parser.add_argument("--add-public-key", help="Add a public key to user pi's authorized_keys")
+    prep_parser.add_argument("--set-host-keys", help="Inject a set of hosts keys from a tar file")
+
+    unprep_parser = action_parser.add_parser("unprep", help="unprep help")
+    unprep_parser.add_argument("image", help="Name of image to unprep to run on actual hardware.")
+    unprep_parser.add_argument("dest", nargs="?", help="Optional name of new image.")
+
+    run_parser = action_parser.add_parser("run", help="run help")
+    run_parser.add_argument("image", help="Name of image to run")
+    run_parser.add_argument("--with-display", action="store_true")
+    run_parser.add_argument("--with-audio", action="store_true")
+    run_parser.add_argument("--with-ssh-port", type=int)
+
+    kernel_parser = action_parser.add_parser("build-kernel", help="run help")
+    kernel_parser.add_argument("source", help="path of https://github.com/raspberrypi/linux.git checkout")
+
+    args = parser.parse_args(argv[1:])
+
+    run.debug = args.debug
+
+    if args.action in ("prep", "unprep", "run", "extract"):
+        need_writeable = args.action in "run" \
+                         or (args.dest is None and args.action != "extract")
+        check_image(args.image, check_write=need_writeable)
+
+    # Any image manipulation we do might contain sensitive files like host
+    # keys. Make sure only we can read files produced.
+    with umask(0o077):
+        if args.action == "prep":
+            if args.add_public_key is not None:
+                if "~" in args.add_public_key:
+                    args.add_public_key = os.path.expanduser(args.public_key)
+            check_dependencies([PARTED, RESIZE2FS, E2FSCK, DEBUGFS])
+            check_public_key(args.add_public_key)
+            check_host_keys(args.set_host_keys)
+            prep(args.image, args.dest,
+                 args.grow_root, args.add_public_key, args.set_host_keys,
+                 args.keep_root)
+        elif args.action == "unprep":
+            check_dependencies([PARTED, DEBUGFS])
+            unprep(args.image, args.dest, args.keep_root)
+        elif args.action == "extract":
+            check_dependencies([PARTED, DEBUGFS])
+            try:
+                extract(args.image, args.what, args.dest, args.keep_root)
+            except FileNotFoundError as e:
+                sys.exit(e)
+
+    if args.action == "run":
+        check_dependencies([QEMU])
+        def prompt():
+            """Prompt on how to get out of the emulator, and pause if
+            args.script is not true."""
+            print("Use Ctrl-a, then 'c' to get into the monitor.  Then 'quit' to exit.")
+            if not args.script and os.isatty(sys.stdin.fileno()):
+                time.sleep(3)
+
+        run_image(args.image,
+                  args.with_display, args.with_audio, args.with_ssh_port,
+                  prompt)
+    elif args.action == "build-kernel":
+        check_dependencies([PATCH, MAKE])
+        # These we don't run directly but are run through make in the kernel
+        # build.
+        check_dependencies(["bc", "gcc", "arm-linux-gnueabihf-gcc"])
+        check_kernel_source(args.source)
+        try:
+            build_kernel(args.source)
+        except subprocess.CalledProcessError as e:
+            print("ERROR: build-kernel failed", file=sys.stderr)
+            print(e.stderr.decode(), file=sys.stderr)
+            sys.exit("Aborting.")
+
+if __name__ == "__main__":
+    main(sys.argv)

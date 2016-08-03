@@ -1,0 +1,132 @@
+#!/bin/bash
+# The MIT License (MIT)
+#
+# Copyright (c) 2016 Marc Meadows
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+# Create test.img.gz using shell commands and privileges.
+# This script needs sudo access.
+#
+# It is specifically not using the same mechanisms as raspbian-qemu - mainly
+# debugfs - since we want to test that those mechanisms work against images
+# created in other ways.
+#
+# This image is runnable with "raspbian-qemu run" and will simply spew a
+# uuencoded tarball of the filesystem, then pause listening on port 22,
+# spewing any output sent to it.  Used in conjunction with
+# BaseTestImageTest.runImage() in test-raspbian-qemu it allows for testing
+# the run command and the prep commands without booting a full raspbian image.
+
+printf "Checking sudo access..."
+if ! sudo -v; then
+    printf "\n"
+    printf "This script needs sudo access to:\n"
+    printf "  losetup, mkfs.ext4, mount, tar, umount"
+    printf "Aborting."
+    exit
+fi
+printf "OK\n"
+
+TESTIMG="test.img"
+ROOTFSDIR=$(mktemp --directory)
+BUSYBOX_URL="https://archive.raspbian.org/raspbian/pool/main/b/busybox/busybox-static_1.22.0-19_armhf.deb"
+MAGIC_BEGIN="MAGIC BEGIN MARKER"
+MAGIC_END="MAGIC END MARKER"
+MAGIC_PRELOAD="/usr/lib/arm-linux-gnueabihf/libarmmem.so"
+
+WORKDIR="${PWD}"
+ROOTBALL="${WORKDIR}/rootfs.tgz"
+
+cd "${ROOTFSDIR}"
+fakeroot <<END_FAKEROOT
+# Fetch the deb for busbox-static from the Rasbian archive, and extract
+# only the busybox executable.
+wget "${BUSYBOX_URL}" --output-document - \
+  | dpkg-deb --fsys-tarfile - \
+  | tar x --to-stdout ./bin/busybox >busybox
+chmod +x busybox
+
+# Make the necessary minimum filesystem and device structure.
+mkdir -p {bin,dev,etc,root,sbin}
+cp -a /dev/{null,console,tty,sda2} .
+
+# Create a init script.
+cat >sbin/init <<END_INIT
+#!/busybox sh
+
+echo "${MAGIC_BEGIN}"
+./busybox tar cf - bin etc root sbin home | ./busybox uuencode -
+echo
+echo "${MAGIC_END}"
+./busybox ip link set eth0 up
+./busybox ip address add 10.0.2.15 dev eth0
+./busybox ip route add 10.0.2.0/24 dev eth0
+./busybox nc -l -p 22
+END_INIT
+chmod +x sbin/init
+
+# Create files to simulate a full Raspibian enough to fool raspbian-qemu.
+mkdir -p home/pi
+chown 1000:1000 home/pi
+mkdir -p etc/udev/rules.d
+mkdir -p etc/ssh
+mkdir -p etc/init.d
+echo "${MAGIC_PRELOAD}" >etc/ld.so.preload
+cat >etc/init.d/regenerate_ssh_host_keys <<END_REGEN
+# Stuff before
+ssh-keygen -t dsa -f /etc/ssh/ssh_host_dsa_key
+ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key
+# Stuff after
+END_REGEN
+
+# Report what we have done.
+find . -ls
+
+# Finally tar it all up from within fakeroot so it has all the right
+# ownerships and permissions.
+tar czvf "${ROOTBALL}" *
+END_FAKEROOT
+cd "${WORKDIR}"
+rm -rf "${ROOTFSDIR}"
+
+# Create a disk image that is similar in layout to Raspbian images.
+dd if=/dev/zero of="${TESTIMG}" bs=1M count=3
+parted "${TESTIMG}" mklabel msdos
+parted --align none "${TESTIMG}" -- mkpart primary 4096B 8191B
+parted --align none "${TESTIMG}" -- mkpart primary 8192B -1s
+
+# This is the prvileged portion of the script. Needed to set up the loop
+# device and mount the image.  Shied away from using something like
+# udisksctl to make it slightly more portable.
+LOOPDEV="/dev/loop0"
+MNTDIR=$(mktemp --directory)
+
+sudo -s <<END_SUDO
+losetup -P "${LOOPDEV}" "${TESTIMG}"
+mkfs.ext4 "${LOOPDEV}p2"
+mount "${LOOPDEV}p2" "${MNTDIR}"
+tar --extract --directory "${MNTDIR}" --file "${ROOTBALL}"
+umount "${MNTDIR}"
+losetup -d "${LOOPDEV}"
+END_SUDO
+
+rmdir "${MNTDIR}"
+rm "${ROOTBALL}"
+gzip -f "${TESTIMG}"

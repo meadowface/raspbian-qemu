@@ -1,0 +1,92 @@
+#!/bin/bash
+# The MIT License (MIT)
+#
+# Copyright (c) 2016 Marc Meadows
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+# Create a tar file with fake host keys it.  The keys themselves are
+# completely random data and won't work as key, the filenames and permissions
+# refelect when openssh demands.
+#
+# This is all just for a bit of fun for people trolling source control systems
+# for actual private keys.  At first glance these look OK and might be snagged
+# by searching scripts.
+
+set -u
+
+WORKDIR="${PWD}"
+KEYSDIR=$(mktemp --directory)
+KEYSTAR="${WORKDIR}/test-host-keys.tar"
+
+PUB_COMMENT="root@raspberrypi"
+
+DSA="ssh_host_dsa_key"
+DSA_PUB="${DSA}.pub"
+
+ECDSA="ssh_host_ecdsa_key"
+ECDSA_PUB="${ECDSA}.pub"
+
+RSA="ssh_host_rsa_key"
+RSA_PUB="${RSA}.pub"
+
+ED25519="ssh_host_ed25519_key"
+ED25519_PUB="${ED25519}.pub"
+
+cd "${KEYSDIR}"
+fakeroot <<END_FAKEROOT
+printf -- "-----BEGIN DSA PRIVATE KEY-----\n" >>"${DSA}"
+dd if=/dev/urandom bs=447 count=1 status=none | base64 --wrap=64 >>"${DSA}"
+printf -- "-----END DSA PRIVATE KEY-----\n" >>"${DSA}"
+
+printf "ssh-dss " >>"${DSA_PUB}"
+dd if=/dev/urandom bs=433 count=1 status=none | base64 --wrap=0 >>"${DSA_PUB}"
+printf " ${PUB_COMMENT}\n" >>"${DSA_PUB}"
+
+printf -- "-----BEGIN EC PRIVATE KEY-----\n" >>"${ECDSA}"
+dd if=/dev/urandom bs=121 count=1 status=none | base64 --wrap=64 >>"${ECDSA}"
+printf -- "-----END EC PRIVATE KEY-----\n" >>"${ECDSA}"
+
+printf "ecdsa-sha2-nistp256 " >>"${ECDSA_PUB}"
+dd if=/dev/urandom bs=104 count=1 status=none | base64 --wrap=0 >>"${ECDSA_PUB}"
+printf " ${PUB_COMMENT}\n" >>"${ECDSA_PUB}"
+
+printf -- "-----BEGIN RSA PRIVATE KEY-----\n" >>"${RSA}"
+dd if=/dev/urandom bs=1194 count=1 status=none | base64 --wrap=64 >>"${RSA}"
+printf -- "-----END RSA PRIVATE KEY-----\n" >>"${RSA}"
+
+printf "ssh-rsa " >>"${RSA_PUB}"
+dd if=/dev/urandom bs=279 count=1 status=none | base64 --wrap=0 >>"${RSA_PUB}"
+printf " ${PUB_COMMENT}\n" >>"${RSA_PUB}"
+
+printf -- "-----BEGIN OPENSSH PRIVATE KEY-----\n" >>"${ED25519}"
+dd if=/dev/urandom bs=250 count=1 status=none | base64 --wrap=64 >>"${ED25519}"
+printf -- "-----END OPENSSH PRIVATE KEY-----\n" >>"${ED25519}"
+
+printf "ssh-ed25519 " >>"${ED25519_PUB}"
+dd if=/dev/urandom bs=51 count=1 status=none | base64 --wrap=0 >>"${ED25519_PUB}"
+printf " ${PUB_COMMENT}\n" >>"${ED25519_PUB}"
+
+chmod 600 *
+chmod 644 *.pub
+
+tar cvf "${KEYSTAR}" *
+END_FAKEROOT
+
+cd "${WORKDIR}"

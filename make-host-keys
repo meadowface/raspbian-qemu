@@ -1,0 +1,58 @@
+#!/bin/bash
+# The MIT License (MIT)
+#
+# Copyright (c) 2016 Marc Meadows
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+# Create a tar file with actual host keys it.  Provided mostly as an example
+# of what the tar file should look like.  Configuration management systems
+# provide much better ways of generating host keys.
+
+set -u
+
+tarfile="${1:-}"
+if [[ -z "${tarfile}" ]]; then
+    echo "usage: $0 filespec"
+    exit
+fi
+
+WORKDIR="${PWD}"
+KEYSDIR=$(mktemp --directory)
+if [[ "${tarfile}" = /* ]]; then
+    KEYSTAR="${tarfile}"
+else
+    KEYSTAR="${WORKDIR}/${tarfile}"
+fi
+
+COMMENT="root@raspberrypi"
+
+cd "${KEYSDIR}"
+fakeroot <<END_FAKEROOT
+for keytype in dsa rsa ecdsa ed25519; do
+    yes | ssh-keygen -N '' -C "${COMMENT}" -t "\${keytype}" -f "ssh_host_\${keytype}_key"
+done
+
+umask 0077
+tar cvf keystar.tar *
+END_FAKEROOT
+
+mv "${KEYSDIR}/keystar.tar" "${KEYSTAR}"
+cd "${WORKDIR}"
+rm -rf "${KEYSDIR}"
