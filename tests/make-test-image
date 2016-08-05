@@ -47,6 +47,7 @@ printf "OK\n"
 TESTIMG="test.img"
 ROOTFSDIR=$(mktemp --directory)
 BUSYBOX_URL="https://archive.raspbian.org/raspbian/pool/main/b/busybox/busybox-static_1.22.0-19_armhf.deb"
+BUSYBOX_DEB="busybox.deb"
 MAGIC_BEGIN="MAGIC BEGIN MARKER"
 MAGIC_END="MAGIC END MARKER"
 MAGIC_PRELOAD="/usr/lib/arm-linux-gnueabihf/libarmmem.so"
@@ -54,11 +55,18 @@ MAGIC_PRELOAD="/usr/lib/arm-linux-gnueabihf/libarmmem.so"
 WORKDIR="${PWD}"
 ROOTBALL="${WORKDIR}/rootfs.tgz"
 
+# If there is a busybox deb already in $WORKDIR, then use it instead of the
+# busybox download to be nice to the raspbian servers during development.
+# Otherwise, download it.
+if [[ ! -f "${BUSYBOX_DEB}" ]]; then
+    wget "${BUSYBOX_URL}" --output-document - >"${BUSYBOX_DEB}"
+fi
+
 cd "${ROOTFSDIR}"
 fakeroot <<END_FAKEROOT
 # Fetch the deb for busbox-static from the Rasbian archive, and extract
 # only the busybox executable.
-wget "${BUSYBOX_URL}" --output-document - \
+cat "${WORKDIR}/${BUSYBOX_DEB}" \
   | dpkg-deb --fsys-tarfile - \
   | tar x --to-stdout ./bin/busybox >busybox
 chmod +x busybox
