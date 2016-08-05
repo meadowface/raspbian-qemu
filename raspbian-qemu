@@ -359,7 +359,19 @@ def run_image(image, display, audio, ssh_port, promptfunc):
     args = [QEMU,
 
             "-kernel", KERNEL_BINARY,
-            "-append", "console=ttyAMA0,115200 root=/dev/sda2 rootfstype=ext4 rw",
+
+            # panic   - don't pause forever after a panic but reboot
+            #           immediately. poweroff ends init which panics the kernel.
+            #           This combined with -no-reboot below will cause qemu
+            #           to exit cleanly in these situations.
+            # console - redirect console to serial port, which -serial below
+            #           sends to stdout.
+            # root    - The image disk shows up as /dev/sda, which we map to
+            #           /dev/mmcblk0 with udev rules and symlinks with one of
+            #           the prep steps but the kernel needs it as sda before
+            #           those kick in.
+            # https://www.kernel.org/doc/Documentation/kernel-parameters.txt
+            "-append", "panic=-1 console=ttyAMA0,115200 root=/dev/sda2 rootfstype=ext4 rw",
 
             # As of mid-2016 qemu does not have a direct raspi machine.  This
             # is the closest to it with the caveat that the versatilepb
@@ -374,6 +386,11 @@ def run_image(image, display, audio, ssh_port, promptfunc):
             # enter the monitor and Ctrl-C will go to the guest
             # instead of interrupting qemu itself.
             "-serial", "mon:stdio",
+
+            # Used in conjunction with panic above, this makes qemu exit
+            # cleanly when the init process is killed.  It also cleanly
+            # exits when reboot is called, with no panic.
+            "-no-reboot",
 
             # Use the raw raspibian image as the "SD card".  It's actually
             # attached as a disk and we symlink /dev/mmcblk0 to /dev/sda

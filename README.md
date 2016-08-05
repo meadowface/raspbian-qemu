@@ -25,7 +25,7 @@ $ wget -qO- https://downloads.raspberrypi.org/raspbian_lite_latest | funzip >ras
 $ ./raspbian-qemu prep raspbian-jessie-lite.img work.img
 $ ./raspbian-qemu run --with-ssh-port=8022 work.img
 ```
-After the emulated Raspbian boots, log in on the console in the terminal or `ssh -p 8022 pi@127.0.0.1`. To end emulation, press **Ctrl-a**, then **'c'** to enter the monitor, then type **'quit'** and press **Enter**.
+After the emulated Raspbian boots, log in on the console in the terminal or `ssh -p 8022 pi@127.0.0.1`. To end emulation login into Raspbian and reboot it.
 
 Requirements
 ------------
@@ -70,7 +70,7 @@ Usage
    ```
    $ ./raspbian-qemu prep raspbian-jessie-lite.img work.img
    ```
-1. Run the image in QEMU.  This will direct the Raspberry Pi console to the current terminal.  Powering down the system will make sure the file system is clean but will not end the emulation.  To end emulation, press **Ctrl-a**, then **'c'** to enter the monitor, then type **'quit'** and press **Enter**.
+1. Run the image in QEMU.  This will direct the Raspberry Pi console to the current terminal.  To end emulation login into Raspbian and reboot it.  Although not as clean, you can also quit QEMU from the monitor at any time.  To do this press **Ctrl-a**, then **'c'** to enter the monitor, then type **'quit'** and press **Enter**.
 
    ```
    $ ./raspbian-qemu run work.img
