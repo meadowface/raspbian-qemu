@@ -48,8 +48,9 @@ TESTIMG="test.img"
 ROOTFSDIR=$(mktemp --directory)
 BUSYBOX_URL="https://archive.raspbian.org/raspbian/pool/main/b/busybox/busybox-static_1.22.0-19_armhf.deb"
 BUSYBOX_DEB="busybox.deb"
-MAGIC_BEGIN="MAGIC BEGIN MARKER"
-MAGIC_END="MAGIC END MARKER"
+
+MAGIC_VERSION="1.0.0"
+MAGIC_MARKER="~~~~ MAGIC MARKER ~~~~"
 MAGIC_PRELOAD="/usr/lib/arm-linux-gnueabihf/libarmmem.so"
 
 WORKDIR="${PWD}"
@@ -79,10 +80,11 @@ cp -a /dev/{null,console,tty,sda2} .
 cat >sbin/init <<END_INIT
 #!/busybox sh
 
-echo "${MAGIC_BEGIN}"
+echo -e "\n${MAGIC_MARKER}"
+echo -n "${MAGIC_VERSION}"
+echo -e "\n${MAGIC_MARKER}"
 ./busybox tar cf - bin etc root sbin home | ./busybox uuencode -
-echo
-echo "${MAGIC_END}"
+echo -e "\n${MAGIC_MARKER}"
 ./busybox ip link set eth0 up
 ./busybox ip address add 10.0.2.15 dev eth0
 ./busybox ip route add 10.0.2.0/24 dev eth0

@@ -179,8 +179,8 @@ class TestImageBase(unittest.TestCase):
     """
     # Extract the magic strings from the make-test-image script so we only
     # define them in one place.
-    (MAGIC_BEGIN,
-     MAGIC_END,
+    (MAGIC_VERSION,
+     MAGIC_MARKER,
      MAGIC_PRELOAD) = [line.partition("=")[-1].strip('"\n')
                        for line in open("make-test-image")
                        if line.startswith("MAGIC")]
@@ -244,9 +244,8 @@ class TestImageBase(unittest.TestCase):
             """TarInfo descendant with no changes except that we can add a
             contents attribute. (TarInfo has slots set)"""
 
-        begin = "\n" + self.MAGIC_BEGIN + "\n"
-        end   = "\n" + self.MAGIC_END + "\n"
-        ssh   = "\n" + sshstr + "\n"
+        marker = "\n" + self.MAGIC_MARKER + "\n"
+        ssh    = "\n" + sshstr + "\n"
 
         if sshstr:
             options += ["--with-ssh-port", "7022"]
@@ -263,8 +262,8 @@ class TestImageBase(unittest.TestCase):
                 if not output_byte:
                     raise ValueError("Unexpected output from run.")
                 output += output_byte
-                if end in output:
-                    #print("MAGIC_END found", flush=True)
+                if output.count(marker) == 3:
+                    #print("3 MAGIC_MARKERs found", flush=True)
                     break
 
             if sshstr:
@@ -296,16 +295,19 @@ class TestImageBase(unittest.TestCase):
 
         # The test image will output to stdout the following:
         #   kernel boot up
-        #   "\n$MAGIC_BEGIN\n"
+        #   "\n$MAGIC_MARKER\n"
+        #   "$MAGIC_VERSION"
+        #   "\n$MAGIC_MARKER\n"
         #   a uuencoded tarfile containing the contents of the filesystem
-        #   "\n$MAGIC_END\n"
+        #   "\n$MAGIC_MARKER\n"
         #   "\n$sshstr\n" (if it was sent)
 
         # Decode the filesystem tar and make a TarFile object out of it.
-        kernel, init = output.split(begin)
-        uu, ssh = init.split(end)
+        kernel, version, uu, ssh = output.split(marker)
         tarbytes = io.BytesIO(codecs.decode(uu.encode(), "uu"))
         tar = tarfile.open(fileobj=tarbytes, tarinfo=File)
+
+        self.assertEqual(version, self.MAGIC_VERSION)
 
         # Go through the tarfile extracting File objects and populating
         # a .contents member with the contents of each file, finally putting
