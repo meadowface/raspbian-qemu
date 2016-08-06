@@ -153,12 +153,17 @@ LOOPDEV="/dev/loop0"
 MNTDIR=$(mktemp --directory)
 
 sudo -s <<END_SUDO
-losetup -P "${LOOPDEV}" "${TESTIMG}"
-mkfs.ext4 "${LOOPDEV}p2"
-mount "${LOOPDEV}p2" "${MNTDIR}"
+loopdev=\$(losetup --partscan --find --show "${TESTIMG}")
+echo "Using loop device \${loopdev}"
+while [[ ! -b "\${loopdev}p2" ]]; do
+    printf "\${loopdev}p2 not present yet, trying again in 1s.\n"
+    sleep 1
+done
+mkfs.ext4 "\${loopdev}p2"
+mount "\${loopdev}p2" "${MNTDIR}"
 tar --extract --directory "${MNTDIR}" --file "${ROOTBALL}"
 umount "${MNTDIR}"
-losetup -d "${LOOPDEV}"
+losetup -d "\${loopdev}"
 END_SUDO
 
 rmdir "${MNTDIR}"
