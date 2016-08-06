@@ -232,10 +232,12 @@ class TestImageBase(unittest.TestCase):
         subprocess.check_output([RASPIQEMU] + args, stderr=subprocess.STDOUT)
 
         # Now make sure root.img was created if request but not if it wasn't.
+        # If created correctly, check its state and then clean it up.
         keep_root = "--keep-root" in args
         self.assertEqual(os.path.exists(self.ROOT_IMG), keep_root)
         if keep_root:
             self.assertOnlyUserReadable(self.ROOT_IMG)
+            os.unlink(self.ROOT_IMG)
 
     def runImage(self, image=TESTIMG, *, growmode=None, options=[]):
         """Return a tuple of:
