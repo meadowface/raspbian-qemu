@@ -239,7 +239,7 @@ class TestImageBase(unittest.TestCase):
             self.assertOnlyUserReadable(self.ROOT_IMG)
             os.unlink(self.ROOT_IMG)
 
-    def runImage(self, image=TESTIMG, *, growmode=None, options=[]):
+    def runImage(self, image, *, growmode=None, options=[]):
         """Return a tuple of:
                 kernel output, file mapping, ssh
 
@@ -374,7 +374,7 @@ class TestPrep(TestImageBase):
         """Perform checks to assert that an image is in a unprepped state.
            Returns the results of runImage for further checking.
         """
-        kernel, files, ssh = self.runImage()
+        kernel, files, ssh = self.runImage(image)
 
         self.assertNotIn(self.SDA_RULES, files)
 
