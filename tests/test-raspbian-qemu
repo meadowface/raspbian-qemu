@@ -338,7 +338,7 @@ class TestImageBase(unittest.TestCase):
         return kernel, files, ssh
 
     @contextlib.contextmanager
-    def assert_image_not_altered(self, image):
+    def assertImageNotAltered(self, image):
         """Context manager which asserts that the image file is not altered
         during the context."""
         def filehash(filespec):
@@ -357,7 +357,7 @@ class TestImageBase(unittest.TestCase):
 
 class TestPrep(TestImageBase):
     """Check the prep and unprep actions."""
-    def assert_prepped(self, image):
+    def assertPrepped(self, image):
         """Perform checks to assert that an image is in a prepped state.
            Returns the results of runImage for further checking.
         """
@@ -370,7 +370,7 @@ class TestPrep(TestImageBase):
 
         return kernel, files, ssh
 
-    def assert_unprepped(self, image):
+    def assertUnPrepped(self, image):
         """Perform checks to assert that an image is in a unprepped state.
            Returns the results of runImage for further checking.
         """
@@ -391,17 +391,17 @@ class TestPrep(TestImageBase):
 
     def test_testimg_starts_unprepped(self):
         """Check that test image is initially unprepped."""
-        self.assert_unprepped(TESTIMG)
+        self.assertUnPrepped(TESTIMG)
 
     def test_simple_prep(self):
         """Simple prep."""
         self.runTool(["prep", TESTIMG])
-        self.assert_prepped(TESTIMG)
+        self.assertPrepped(TESTIMG)
 
     def test_simple_prep_keep_root(self):
         """Simple prep with --keep-root."""
         self.runTool(["--keep-root", "prep", TESTIMG])
-        self.assert_prepped(TESTIMG)
+        self.assertPrepped(TESTIMG)
 
     def test_prep_missing_source(self):
         """Prep with missing source file."""
@@ -412,36 +412,36 @@ class TestPrep(TestImageBase):
         """Multiple preps on same image."""
         self.runTool(["prep", TESTIMG])
         self.runTool(["prep", TESTIMG])
-        self.assert_prepped(TESTIMG)
+        self.assertPrepped(TESTIMG)
 
     def test_prep_to_dest(self):
         """Prep to a different dest file."""
-        with self.assert_image_not_altered(TESTIMG):
+        with self.assertImageNotAltered(TESTIMG):
             self.runTool(["prep", TESTIMG, OTHERIMG])
-            self.assert_prepped(OTHERIMG)
+            self.assertPrepped(OTHERIMG)
             self.assertOnlyUserReadable(OTHERIMG)
             os.unlink(OTHERIMG)
 
     def test_simple_unprep(self):
         """Simple unprep."""
         self.runTool(["unprep", TESTIMG])
-        self.assert_unprepped(TESTIMG)
+        self.assertUnPrepped(TESTIMG)
 
     def test_simple_unprep_keep_root(self):
         """Simple unprep. with --keep-root"""
         self.runTool(["--keep-root", "unprep", TESTIMG])
-        self.assert_unprepped(TESTIMG)
+        self.assertUnPrepped(TESTIMG)
 
     def test_multi_unprep(self):
         """Multiple unpreps on same image."""
         self.runTool(["unprep", TESTIMG])
         self.runTool(["unprep", TESTIMG])
-        self.assert_unprepped(TESTIMG)
+        self.assertUnPrepped(TESTIMG)
 
     def test_unprep_to_dest(self):
         """Unprep to a different dest file."""
         self.runTool(["unprep", TESTIMG, OTHERIMG])
-        self.assert_unprepped(OTHERIMG)
+        self.assertUnPrepped(OTHERIMG)
         self.assertOnlyUserReadable(OTHERIMG)
         os.unlink(OTHERIMG)
 
@@ -453,7 +453,7 @@ class TestPrep(TestImageBase):
         self.assertEqual(root_after, root_before + 1024**2)
 
         # Make sure that as well as growing the root, it was prepped too.
-        self.assert_prepped(TESTIMG)
+        self.assertPrepped(TESTIMG)
 
     def prep_with_public_key(self, pubkey):
         """prep an image adding a public key with the contents of pubkey."""
@@ -466,7 +466,7 @@ class TestPrep(TestImageBase):
         """prep --add-public-key."""
         PUBKEY = b"LET ME IN\n"
         self.prep_with_public_key(PUBKEY)
-        kernel, files, ssh = self.assert_prepped(TESTIMG)
+        kernel, files, ssh = self.assertPrepped(TESTIMG)
         self.assertIn(self.AUTHKEYS, files)
         self.assertEqual(files[self.AUTHKEYS].contents,
                          PUBKEY)
@@ -474,12 +474,12 @@ class TestPrep(TestImageBase):
     def test_add_bad_public_key(self):
         """prep --add-public-key but with a private key file.
         Make sure image isn't altered at all."""
-        with self.assert_image_not_altered(TESTIMG):
+        with self.assertImageNotAltered(TESTIMG):
             with self.assertRaises(subprocess.CalledProcessError):
                 self.runTool(["prep", "--add-public-key=", TESTIMG])
 
     def test_add_bad_private_key(self):
-        with self.assert_image_not_altered(TESTIMG):
+        with self.assertImageNotAltered(TESTIMG):
             with self.assertRaises(subprocess.CalledProcessError):
                 self.prep_with_public_key(b"-----BEGIN RSA PRIVATE KEY-----")
 
@@ -489,7 +489,7 @@ class TestPrep(TestImageBase):
         for attempt in range(2):
             self.prep_with_public_key(PUBKEY)
 
-        kernel, files, ssh = self.assert_prepped(TESTIMG)
+        kernel, files, ssh = self.assertPrepped(TESTIMG)
         self.assertIn(self.AUTHKEYS, files)
         self.assertEqual(files[self.AUTHKEYS].contents,
                          PUBKEY)
@@ -501,7 +501,7 @@ class TestPrep(TestImageBase):
         self.prep_with_public_key(PUBKEY_ONE)
         self.prep_with_public_key(PUBKEY_TWO)
 
-        kernel, files, ssh = self.assert_prepped(TESTIMG)
+        kernel, files, ssh = self.assertPrepped(TESTIMG)
         self.assertIn(self.AUTHKEYS, files)
         self.assertEqual(files[self.AUTHKEYS].contents,
                          PUBKEY_ONE + PUBKEY_TWO)
@@ -513,7 +513,7 @@ class TestPrep(TestImageBase):
 
         self.runTool(["prep", "--set-host-keys=" + self.HOSTKEYSTAR, TESTIMG])
 
-        kernel, files, ssh = self.assert_prepped(TESTIMG)
+        kernel, files, ssh = self.assertPrepped(TESTIMG)
         with tarfile.open(self.HOSTKEYSTAR) as tar:
             for member in tar:
                 filespec = os.path.join("/etc/ssh", member.name)
@@ -555,7 +555,7 @@ class TestPrep(TestImageBase):
         for alterfunc in (bad_mode_pub, bad_mode_private, bad_owner, bad_group):
             with self.bad_host_keys(alterfunc) as badkeys:
                 with self.assertRaises(subprocess.CalledProcessError):
-                    with self.assert_image_not_altered(TESTIMG):
+                    with self.assertImageNotAltered(TESTIMG):
                         self.runTool(["prep", "--set-host-keys=" + badkeys,
                                       TESTIMG])
 
