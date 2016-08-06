@@ -177,14 +177,6 @@ class TestImageBase(unittest.TestCase):
     """Base class for tests using the included test.img which is created
     with the make-test-image script.
     """
-    # Extract the magic strings from the make-test-image script so we only
-    # define them in one place.
-    (MAGIC_VERSION,
-     MAGIC_MARKER,
-     MAGIC_PRELOAD) = [line.partition("=")[-1].strip('"\n')
-                       for line in open("make-test-image")
-                       if line.startswith("MAGIC")]
-
     # This will be there if the hidden --keep-root is passed.
     ROOT_IMG = "root.img"
 
@@ -194,6 +186,20 @@ class TestImageBase(unittest.TestCase):
     AUTHKEYS         = "/home/pi/.ssh/authorized_keys"
     PRELOAD          = "/etc/ld.so.preload"
     SDA_RULES        = "/etc/udev/rules.d/90-qemu-sda.rules"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Extract the magic strings from the make-test-image script so we only
+        # define them in one place and set them as instance variables.
+        for line in open("make-test-image"):
+            if line.startswith("MAGIC"):
+                name, equal, value = line.strip().partition("=")
+                if '"' not in value:
+                    value = int(value)
+                else:
+                    value = value.strip('"')
+                setattr(self, name, value)
 
     def setUp(self):
         # Create a shiny new TESTIMG from the included .gz file for each run.
@@ -214,7 +220,7 @@ class TestImageBase(unittest.TestCase):
         self.assertEqual(mbr.partitions[0].begin, 4096)
         self.assertEqual(mbr.partitions[0].size,  4096)
         self.assertEqual(mbr.partitions[1].begin, 8192)
-        self.assertEqual(mbr.partitions[1].size,  3137536)
+        self.assertEqual(mbr.partitions[1].size, self.MAGIC_ROOT_SECTORS * 512)
 
     def runTool(self, args):
         """Run the tool with a check for a kept root.img."""
@@ -231,7 +237,7 @@ class TestImageBase(unittest.TestCase):
         if keep_root:
             self.assertOnlyUserReadable(self.ROOT_IMG)
 
-    def runImage(self, image=TESTIMG, sshstr="", options=[]):
+    def runImage(self, image=TESTIMG, *, growmode=None, options=[]):
         """Return a tuple of:
                 kernel output, file mapping, ssh
 
@@ -245,9 +251,17 @@ class TestImageBase(unittest.TestCase):
             contents attribute. (TarInfo has slots set)"""
 
         marker = "\n" + self.MAGIC_MARKER + "\n"
-        ssh    = "\n" + sshstr + "\n"
+        ssh    = "\nHIYA-FROM-SSH\n"
 
-        if sshstr:
+        # Pass in the growmode by growing the root partition that many sectors.
+        # First make sure the root partition is an exepcted size.  If it's
+        # been grown already, growmode won't work.
+        if growmode:
+            self.assertEqual(read_mbr(TESTIMG).partitions[1].size,
+                             self.MAGIC_ROOT_SECTORS * 512)
+            self.runTool(["prep", image, "--grow-root", str(growmode * 512)])
+
+        if growmode == self.MAGIC_GROW_MODE_SSH:
             options += ["--with-ssh-port", "7022"]
 
         run = subprocess.Popen([RASPIQEMU, "run", image] + options,
@@ -266,7 +280,7 @@ class TestImageBase(unittest.TestCase):
                     #print("3 MAGIC_MARKERs found", flush=True)
                     break
 
-            if sshstr:
+            if growmode == self.MAGIC_GROW_MODE_SSH:
                 #TODO: Is a race possible here where we try to connect before
                 #TODO: the nc is listening?  Or does the qemu networking
                 #TODO: basically eliminate it by keeping data in transit?
@@ -280,10 +294,10 @@ class TestImageBase(unittest.TestCase):
                     output += run.stdout.read(1)
                     if ssh in output:
                         break
-
-            # Since we're using mon:stdio, this is Ctrl-a 'c' to enter the
-            # monitor, then 'quit<enter>'' to exit the emulator.
-            run.stdin.write("\x01cquit\n")
+            elif growmode == self.MAGIC_GROW_MODE_INPUT:
+                # Since we're using mon:stdio, this is Ctrl-a 'c' to enter the
+                # monitor, then 'quit<enter>'' to exit the emulator.
+                run.stdin.write("\x01cquit\n")
             run.stdin.close()
             #print("quit sent", flush=True)
             output += run.stdout.read()
@@ -630,11 +644,15 @@ class TestBuildKernel(TestImageBase):
 
 class TestRun(TestImageBase):
     """Check the run action."""
+    def test_monitor_quit(self):
+        """run and quit using the monitor."""
+        kernel, files, ssh = self.runImage(TESTIMG,
+                                           growmode=self.MAGIC_GROW_MODE_INPUT)
+
     def test_with_ssh_port(self):
         """run --with-ssh-port."""
-        tag = "HELLO-FROM-SSH"
-        kernel, files, ssh = self.runImage(TESTIMG, tag)
-        self.assertIn(tag, ssh)
+        kernel, files, ssh = self.runImage(TESTIMG,
+                                           growmode=self.MAGIC_GROW_MODE_SSH)
 
     def test_with_display(self):
         """run --with-display.  Only checked if DISPLAY is set.

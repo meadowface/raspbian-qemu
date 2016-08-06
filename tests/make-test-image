@@ -49,9 +49,13 @@ ROOTFSDIR=$(mktemp --directory)
 BUSYBOX_URL="https://archive.raspbian.org/raspbian/pool/main/b/busybox/busybox-static_1.22.0-19_armhf.deb"
 BUSYBOX_DEB="busybox.deb"
 
-MAGIC_VERSION="1.0.0"
+MAGIC_VERSION="1.1.0"
 MAGIC_MARKER="~~~~ MAGIC MARKER ~~~~"
 MAGIC_PRELOAD="/usr/lib/arm-linux-gnueabihf/libarmmem.so"
+
+MAGIC_ROOT_SECTORS=6400
+MAGIC_GROW_MODE_SSH=1
+MAGIC_GROW_MODE_INPUT=2
 
 WORKDIR="${PWD}"
 ROOTBALL="${WORKDIR}/rootfs.tgz"
@@ -85,10 +89,28 @@ echo -n "${MAGIC_VERSION}"
 echo -e "\n${MAGIC_MARKER}"
 ./busybox tar cf - bin etc root sbin home | ./busybox uuencode -
 echo -e "\n${MAGIC_MARKER}"
-./busybox ip link set eth0 up
-./busybox ip address add 10.0.2.15 dev eth0
-./busybox ip route add 10.0.2.0/24 dev eth0
-./busybox nc -l -p 22
+# Figure out how many sectors over the MAGIC_ROOT_SECTORS we are.
+# Use this a "growmode" and decide on what to do based on that mode.
+growmode="\\\$((\\\$(./busybox blockdev --getsz /dev/sda2) - $MAGIC_ROOT_SECTORS))"
+case "\\\${growmode}" in
+    "${MAGIC_GROW_MODE_SSH}")
+       echo "Waiting for ssh"
+       ./busybox ip link set eth0 up
+       ./busybox ip address add 10.0.2.15 dev eth0
+       ./busybox ip route add 10.0.2.0/24 dev eth0
+       ./busybox nc -l -p 22
+       ;;
+    "${MAGIC_GROW_MODE_INPUT}")
+       echo "Waiting for input..."
+       read
+       ;;
+    *) echo "Exiting cleanly"
+       ;;
+esac
+
+# Attempt as clean a shutdown as possible.
+./busybox umount -r /
+./busybox reboot -f
 END_INIT
 chmod +x sbin/init
 
@@ -117,10 +139,12 @@ cd "${WORKDIR}"
 rm -rf "${ROOTFSDIR}"
 
 # Create a disk image that is similar in layout to Raspbian images.
-dd if=/dev/zero of="${TESTIMG}" bs=1M count=3
+# Base it on the desired size of MAGIC_ROOT_SECTORS and add in 16 sectors
+# for the initial alignment and the first partition.
+dd if=/dev/zero of="${TESTIMG}" bs=512 count="$((MAGIC_ROOT_SECTORS + 16))"
 parted "${TESTIMG}" mklabel msdos
-parted --align none "${TESTIMG}" -- mkpart primary 4096B 8191B
-parted --align none "${TESTIMG}" -- mkpart primary 8192B -1s
+parted --align none "${TESTIMG}" -- mkpart primary 8s  15s
+parted --align none "${TESTIMG}" -- mkpart primary 16s -1s
 
 # This is the prvileged portion of the script. Needed to set up the loop
 # device and mount the image.  Shied away from using something like
