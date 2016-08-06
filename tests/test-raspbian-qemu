@@ -46,14 +46,14 @@ import tarfile
 import tempfile
 import unittest
 
-RASPIQEMU = "../raspbian-qemu"
+TOOL      = "../raspbian-qemu"
 TESTIMG   = "test.img"
 OTHERIMG  = "other.img"
 
 # Prevent the import of the tool from creating __pycache__ directory and then
 # import the tool so we can access it directly as a module for some unit tests.
 sys.dont_write_bytecode = True
-raspiqemu = importlib.machinery.SourceFileLoader('raspiqemu', RASPIQEMU).load_module()
+raspiqemu = importlib.machinery.SourceFileLoader('raspiqemu', TOOL).load_module()
 
 class TestDataCopy(unittest.TestCase):
     """Unit test data_copy() and related functions."""
@@ -222,14 +222,14 @@ class TestImageBase(unittest.TestCase):
         self.assertEqual(mbr.partitions[1].begin, 8192)
         self.assertEqual(mbr.partitions[1].size, self.MAGIC_ROOT_SECTORS * 512)
 
-    def runTool(self, args):
-        """Run the tool with a check for a kept root.img."""
+    def callTool(self, args):
+        """Call the raspbian-qemu tool with a check for a kept root.img."""
         # Clean up any root images so we can assert whether it's created
         # or not after the run.
         if os.path.exists(self.ROOT_IMG):
             os.unlink(self.ROOT_IMG)
 
-        subprocess.check_output([RASPIQEMU] + args, stderr=subprocess.STDOUT)
+        subprocess.check_output([TOOL] + args, stderr=subprocess.STDOUT)
 
         # Now make sure root.img was created if request but not if it wasn't.
         # If created correctly, check its state and then clean it up.
@@ -261,12 +261,12 @@ class TestImageBase(unittest.TestCase):
         if growmode:
             self.assertEqual(read_mbr(TESTIMG).partitions[1].size,
                              self.MAGIC_ROOT_SECTORS * 512)
-            self.runTool(["prep", image, "--grow-root", str(growmode * 512)])
+            self.callTool(["prep", image, "--grow-root", str(growmode * 512)])
 
         if growmode == self.MAGIC_GROW_MODE_SSH:
             options += ["--with-ssh-port", "7022"]
 
-        run = subprocess.Popen([RASPIQEMU, "run", image] + options,
+        run = subprocess.Popen([TOOL, "run", image] + options,
                                universal_newlines=True,
                                stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE,
@@ -395,52 +395,52 @@ class TestPrep(TestImageBase):
 
     def test_simple_prep(self):
         """Simple prep."""
-        self.runTool(["prep", TESTIMG])
+        self.callTool(["prep", TESTIMG])
         self.assertPrepped(TESTIMG)
 
     def test_simple_prep_keep_root(self):
         """Simple prep with --keep-root."""
-        self.runTool(["--keep-root", "prep", TESTIMG])
+        self.callTool(["--keep-root", "prep", TESTIMG])
         self.assertPrepped(TESTIMG)
 
     def test_prep_missing_source(self):
         """Prep with missing source file."""
         with self.assertRaises(subprocess.CalledProcessError):
-            self.runTool(["--debug", "prep", "missing.img"])
+            self.callTool(["--debug", "prep", "missing.img"])
 
     def test_multi_prep(self):
         """Multiple preps on same image."""
-        self.runTool(["prep", TESTIMG])
-        self.runTool(["prep", TESTIMG])
+        self.callTool(["prep", TESTIMG])
+        self.callTool(["prep", TESTIMG])
         self.assertPrepped(TESTIMG)
 
     def test_prep_to_dest(self):
         """Prep to a different dest file."""
         with self.assertImageNotAltered(TESTIMG):
-            self.runTool(["prep", TESTIMG, OTHERIMG])
+            self.callTool(["prep", TESTIMG, OTHERIMG])
             self.assertPrepped(OTHERIMG)
             self.assertOnlyUserReadable(OTHERIMG)
             os.unlink(OTHERIMG)
 
     def test_simple_unprep(self):
         """Simple unprep."""
-        self.runTool(["unprep", TESTIMG])
+        self.callTool(["unprep", TESTIMG])
         self.assertUnPrepped(TESTIMG)
 
     def test_simple_unprep_keep_root(self):
         """Simple unprep. with --keep-root"""
-        self.runTool(["--keep-root", "unprep", TESTIMG])
+        self.callTool(["--keep-root", "unprep", TESTIMG])
         self.assertUnPrepped(TESTIMG)
 
     def test_multi_unprep(self):
         """Multiple unpreps on same image."""
-        self.runTool(["unprep", TESTIMG])
-        self.runTool(["unprep", TESTIMG])
+        self.callTool(["unprep", TESTIMG])
+        self.callTool(["unprep", TESTIMG])
         self.assertUnPrepped(TESTIMG)
 
     def test_unprep_to_dest(self):
         """Unprep to a different dest file."""
-        self.runTool(["unprep", TESTIMG, OTHERIMG])
+        self.callTool(["unprep", TESTIMG, OTHERIMG])
         self.assertUnPrepped(OTHERIMG)
         self.assertOnlyUserReadable(OTHERIMG)
         os.unlink(OTHERIMG)
@@ -448,7 +448,7 @@ class TestPrep(TestImageBase):
     def test_grow_root(self):
         """Prep with growing root."""
         root_before = read_mbr(TESTIMG).partitions[1].size
-        self.runTool(["prep", "--grow-root=1M", TESTIMG])
+        self.callTool(["prep", "--grow-root=1M", TESTIMG])
         root_after = read_mbr(TESTIMG).partitions[1].size
         self.assertEqual(root_after, root_before + 1024**2)
 
@@ -460,7 +460,7 @@ class TestPrep(TestImageBase):
         with tempfile.NamedTemporaryFile() as keyfile:
             keyfile.write(pubkey)
             keyfile.flush()
-            self.runTool(["prep", "--add-public-key=" + keyfile.name, TESTIMG])
+            self.callTool(["prep", "--add-public-key=" + keyfile.name, TESTIMG])
 
     def test_add_public_key(self):
         """prep --add-public-key."""
@@ -476,7 +476,7 @@ class TestPrep(TestImageBase):
         Make sure image isn't altered at all."""
         with self.assertImageNotAltered(TESTIMG):
             with self.assertRaises(subprocess.CalledProcessError):
-                self.runTool(["prep", "--add-public-key=", TESTIMG])
+                self.callTool(["prep", "--add-public-key=", TESTIMG])
 
     def test_add_bad_private_key(self):
         with self.assertImageNotAltered(TESTIMG):
@@ -511,7 +511,7 @@ class TestPrep(TestImageBase):
         Make sure the keys get injected with the right permissions and that
         the initscript is properly altered."""
 
-        self.runTool(["prep", "--set-host-keys=" + self.HOSTKEYSTAR, TESTIMG])
+        self.callTool(["prep", "--set-host-keys=" + self.HOSTKEYSTAR, TESTIMG])
 
         kernel, files, ssh = self.assertPrepped(TESTIMG)
         with tarfile.open(self.HOSTKEYSTAR) as tar:
@@ -556,7 +556,7 @@ class TestPrep(TestImageBase):
             with self.bad_host_keys(alterfunc) as badkeys:
                 with self.assertRaises(subprocess.CalledProcessError):
                     with self.assertImageNotAltered(TESTIMG):
-                        self.runTool(["prep", "--set-host-keys=" + badkeys,
+                        self.callTool(["prep", "--set-host-keys=" + badkeys,
                                       TESTIMG])
 
 
@@ -586,14 +586,14 @@ class TestExtract(TestImageBase):
     def test_no_hostkeys(self):
         """Test extract when there are no host keys."""
         with self.assertRaises(subprocess.CalledProcessError):
-            self.runTool(["extract", TESTIMG, "hostkeys", "missing.tar"])
+            self.callTool(["extract", TESTIMG, "hostkeys", "missing.tar"])
 
     def test_hostkeys(self):
         """Inject some host keys and then extract, confirming that what we
         extracted is what we injected."""
         EXTRACTED="extracted.tar"
-        self.runTool(["prep", "--set-host-keys=" + self.HOSTKEYSTAR, TESTIMG])
-        self.runTool(["extract", TESTIMG, "hostkeys", EXTRACTED])
+        self.callTool(["prep", "--set-host-keys=" + self.HOSTKEYSTAR, TESTIMG])
+        self.callTool(["extract", TESTIMG, "hostkeys", EXTRACTED])
         try:
             self.assertTarfilesEqual(self.HOSTKEYSTAR, EXTRACTED)
             self.assertOnlyUserReadable(EXTRACTED)
@@ -603,8 +603,8 @@ class TestExtract(TestImageBase):
     def test_hostkeys_keep_root(self):
         """Simple host keys extraction with --keep-root."""
         EXTRACTED="ignored.tar"
-        self.runTool(["prep", "--set-host-keys=" + self.HOSTKEYSTAR, TESTIMG])
-        self.runTool(["--keep-root", "extract", TESTIMG, "hostkeys", EXTRACTED])
+        self.callTool(["prep", "--set-host-keys=" + self.HOSTKEYSTAR, TESTIMG])
+        self.callTool(["--keep-root", "extract", TESTIMG, "hostkeys", EXTRACTED])
         os.unlink(EXTRACTED)
 
 class TestBuildKernel(TestImageBase):
@@ -612,22 +612,22 @@ class TestBuildKernel(TestImageBase):
     def test_build_kernel_no_arg(self):
         """Run build-kernel without a source argument."""
         with self.assertRaises(subprocess.CalledProcessError):
-            self.runTool(["build-kernel"])
+            self.callTool(["build-kernel"])
 
     def test_build_kernel_bad_arg(self):
         """Run build-kernel with bad source arguments."""
         # Non-existing dir
         with self.assertRaises(subprocess.CalledProcessError):
-            self.runTool(["build-kernel", ""])
+            self.callTool(["build-kernel", ""])
 
         # Empty dir
         with tempfile.TemporaryDirectory() as tmpdir:
             with self.assertRaises(subprocess.CalledProcessError):
-                self.runTool(["build-kernel", tmpdir])
+                self.callTool(["build-kernel", tmpdir])
 
         # File, not dir
         with self.assertRaises(subprocess.CalledProcessError):
-            self.runTool(["build-kernel", TESTIMG])
+            self.callTool(["build-kernel", TESTIMG])
 
     def test_build_kernel(self):
         """Build the kernel from a checkout named test-linux.  Easiest
@@ -639,7 +639,7 @@ class TestBuildKernel(TestImageBase):
         if os.path.isdir(SOURCEDIR):
             if os.path.isfile(raspiqemu.KERNEL_BINARY):
                 os.unlink(raspiqemu.KERNEL_BINARY)
-            self.runTool(["build-kernel", SOURCEDIR])
+            self.callTool(["build-kernel", SOURCEDIR])
             self.assertTrue(os.path.isfile(raspiqemu.KERNEL_BINARY))
         else:
             print("\n====!!! Skipping build-kernel since test-linux not present !!!====\n")
