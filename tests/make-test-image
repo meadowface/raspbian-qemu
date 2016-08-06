@@ -49,6 +49,8 @@ ROOTFSDIR=$(mktemp --directory)
 BUSYBOX_URL="https://archive.raspbian.org/raspbian/pool/main/b/busybox/busybox-static_1.22.0-19_armhf.deb"
 BUSYBOX_DEB="busybox.deb"
 
+# MAGIC_* variables are used both in this script and parsed by
+# test-raspbian-qemu in TestImageBase for use in the corresponding code there.
 MAGIC_VERSION="1.1.0"
 MAGIC_MARKER="~~~~ MAGIC MARKER ~~~~"
 MAGIC_PRELOAD="/usr/lib/arm-linux-gnueabihf/libarmmem.so"
@@ -61,16 +63,15 @@ WORKDIR="${PWD}"
 ROOTBALL="${WORKDIR}/rootfs.tgz"
 
 # If there is a busybox deb already in $WORKDIR, then use it instead of the
-# busybox download to be nice to the raspbian servers during development.
-# Otherwise, download it.
+# busybox download to be nice to the Raspbian servers during development.
+# Otherwise, download it from the Raspbian archive.
 if [[ ! -f "${BUSYBOX_DEB}" ]]; then
     wget "${BUSYBOX_URL}" --output-document - >"${BUSYBOX_DEB}"
 fi
 
 cd "${ROOTFSDIR}"
 fakeroot <<END_FAKEROOT
-# Fetch the deb for busbox-static from the Rasbian archive, and extract
-# only the busybox executable.
+# Extract only the busybox executable into the test image.
 cat "${WORKDIR}/${BUSYBOX_DEB}" \
   | dpkg-deb --fsys-tarfile - \
   | tar x --to-stdout ./bin/busybox >busybox
@@ -81,13 +82,18 @@ mkdir -p {bin,dev,etc,root,sbin}
 cp -a /dev/{null,console,tty,sda2} .
 
 # Create a init script.
+# NOTE: The triple-backslashes are to escape out of both the END_INIT heredoc
+#       *and* the END_FAKEROOT heredoc so the dollar sign makes it into the
+#       init script and aren't replaced by top-level variables.
 cat >sbin/init <<END_INIT
 #!/busybox sh
 
 echo -e "\n${MAGIC_MARKER}"
 echo -n "${MAGIC_VERSION}"
+
 echo -e "\n${MAGIC_MARKER}"
 ./busybox tar cf - bin etc root sbin home | ./busybox uuencode -
+
 echo -e "\n${MAGIC_MARKER}"
 # Figure out how many sectors over the MAGIC_ROOT_SECTORS we are.
 # Use this a "growmode" and decide on what to do based on that mode.
@@ -146,10 +152,9 @@ parted "${TESTIMG}" mklabel msdos
 parted --align none "${TESTIMG}" -- mkpart primary 8s  15s
 parted --align none "${TESTIMG}" -- mkpart primary 16s -1s
 
-# This is the prvileged portion of the script. Needed to set up the loop
+# This is the privileged portion of the script. Needed to set up the loop
 # device and mount the image.  Shied away from using something like
 # udisksctl to make it slightly more portable.
-LOOPDEV="/dev/loop0"
 MNTDIR=$(mktemp --directory)
 
 sudo -s <<END_SUDO
