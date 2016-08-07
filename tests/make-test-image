@@ -56,13 +56,14 @@ BUSYBOX_DEB="busybox.deb"
 
 # MAGIC_* variables are used both in this script and parsed by
 # test-raspbian-qemu in TestImageBase for use in the corresponding code there.
-MAGIC_VERSION="1.2.0"
+MAGIC_VERSION="1.3.0"
 MAGIC_MARKER="~~~~ MAGIC MARKER ~~~~"
 MAGIC_PRELOAD="/usr/lib/arm-linux-gnueabihf/libarmmem.so"
 
 MAGIC_ROOT_SECTORS=6400
 MAGIC_GROW_MODE_SSH=1
 MAGIC_GROW_MODE_INPUT=2
+MAGIC_GROW_MODE_SLEEP=3
 
 WORKDIR="${PWD}"
 ROOTBALL="${WORKDIR}/rootfs.tgz"
@@ -114,6 +115,11 @@ case "\\\${growmode}" in
     "${MAGIC_GROW_MODE_INPUT}")
        echo "Waiting for input..."
        read
+       ;;
+    "${MAGIC_GROW_MODE_SLEEP}")
+       while true; do
+           ./busybox sleep 10
+       done
        ;;
     *) echo "Exiting cleanly"
        ;;
