@@ -32,6 +32,7 @@
 """
 
 import codecs
+import collections
 import contextlib
 from ctypes import LittleEndianStructure, c_ubyte, c_uint, sizeof
 import gzip
@@ -240,17 +241,33 @@ class TestImageBase(unittest.TestCase):
             os.unlink(self.ROOT_IMG)
 
     def runImage(self, image, *, growmode=None, options=[]):
-        """Return a tuple of:
-                kernel output, file mapping, ssh
+        """Execute the test image pointed to by image, adding any options
+        and interact with it according to the growmode if any (see below).
 
-        Where kernel output is the console output of the kernel on bootup,
-        and file mapping is a mapping where the key is a path and the value
-        is a File object (see below) for all files in the test image and ssh
-        is any data that came in over the ssh port.
+        Returns a RunInfo tuple, see its docstring for description
+        of fields.
         """
         class File(tarfile.TarInfo):
             """TarInfo descendant with no changes except that we can add a
             contents attribute. (TarInfo has slots set)"""
+
+        class RunInfo(collections.namedtuple("RunInfo",
+                                             ("growmode",
+                                              "version",
+                                              "bootup",
+                                              "files",
+                                              "input",
+                                              "shutdown"
+                                             ))):
+            """Data-holder for the results of a running the test image.
+                growmode  - which growmode was used.
+                version   - version of the test image.
+                bootup    - bootup messages on the console.
+                files     - a mapping of path to File object.
+                input     - any input sent via growmodes.
+                shutdown  - shutdown messages on the console.
+            """
+            pass
 
         marker = "\n" + self.MAGIC_MARKER + "\n"
         ssh    = "\nHIYA-FROM-SSH\n"
@@ -320,16 +337,21 @@ class TestImageBase(unittest.TestCase):
                 raise
 
         # The test image will output to stdout the following:
-        #   kernel boot up
+        #   boot up messages
         #   "\n$MAGIC_MARKER\n"
         #   "$MAGIC_VERSION"
         #   "\n$MAGIC_MARKER\n"
         #   a uuencoded tarfile containing the contents of the filesystem
         #   "\n$MAGIC_MARKER\n"
-        #   "\n$sshstr\n" (if it was sent)
+        #   any input sent via growmodes
+        #   (The below might not be present in some growmodes.)
+        #   "\n$MAGIC_MARKER\n"
+        #   shutdown messages
 
         # Decode the filesystem tar and make a TarFile object out of it.
-        kernel, version, uu, ssh = output.split(marker)
+        sections = output.split(marker)
+        bootup, version, uu, ssh = sections[:4]
+        shutdown = sections[4] if len(sections) >= 5 else None
         tarbytes = io.BytesIO(codecs.decode(uu.encode(), "uu"))
         tar = tarfile.open(fileobj=tarbytes, tarinfo=File)
 
@@ -345,7 +367,8 @@ class TestImageBase(unittest.TestCase):
                 file.contents = file.contents.read()
             files["/" + file.name] = file
 
-        return kernel, files, ssh
+        return RunInfo(growmode, version,
+                               bootup, files, ssh, shutdown)
 
     @contextlib.contextmanager
     def assertImageNotAltered(self, image):
@@ -371,33 +394,33 @@ class TestPrep(TestImageBase):
         """Perform checks to assert that an image is in a prepped state.
            Returns the results of runImage for further checking.
         """
-        kernel, files, ssh = self.runImage(image)
+        runinfo = self.runImage(image)
 
-        self.assertIn(self.SDA_RULES, files)
+        self.assertIn(self.SDA_RULES, runinfo.files)
 
         preload = b"#" + self.MAGIC_PRELOAD.encode() + b"\n"
-        self.assertEqual(files[self.PRELOAD].contents, preload)
+        self.assertEqual(runinfo.files[self.PRELOAD].contents, preload)
 
-        return kernel, files, ssh
+        return runinfo
 
     def assertUnPrepped(self, image):
         """Perform checks to assert that an image is in a unprepped state.
            Returns the results of runImage for further checking.
         """
-        kernel, files, ssh = self.runImage(image)
+        runinfo = self.runImage(image)
 
-        self.assertNotIn(self.SDA_RULES, files)
+        self.assertNotIn(self.SDA_RULES, runinfo.files)
 
         preload = self.MAGIC_PRELOAD.encode() + b"\n"
-        self.assertEqual(files[self.PRELOAD].contents, preload)
+        self.assertEqual(runinfo.files[self.PRELOAD].contents, preload)
 
         # If there are no host keys, then the initscript should be set to
         # generate them.
-        if "/etc/ssh/ssh_host_dsa_key" not in files:
-            initscript = files[self.REGEN_INITSCRIPT]
+        if "/etc/ssh/ssh_host_dsa_key" not in runinfo.files:
+            initscript = runinfo.files[self.REGEN_INITSCRIPT]
             self.assertIn(b"ssh-keygen", initscript.contents)
 
-        return kernel, files, ssh
+        return runinfo
 
     def test_testimg_starts_unprepped(self):
         """Check that test image is initially unprepped."""
@@ -476,9 +499,9 @@ class TestPrep(TestImageBase):
         """prep --add-public-key."""
         PUBKEY = b"LET ME IN\n"
         self.prep_with_public_key(PUBKEY)
-        kernel, files, ssh = self.assertPrepped(TESTIMG)
-        self.assertIn(self.AUTHKEYS, files)
-        self.assertEqual(files[self.AUTHKEYS].contents,
+        runinfo = self.assertPrepped(TESTIMG)
+        self.assertIn(self.AUTHKEYS, runinfo.files)
+        self.assertEqual(runinfo.files[self.AUTHKEYS].contents,
                          PUBKEY)
 
     def test_add_bad_public_key(self):
@@ -499,9 +522,9 @@ class TestPrep(TestImageBase):
         for attempt in range(2):
             self.prep_with_public_key(PUBKEY)
 
-        kernel, files, ssh = self.assertPrepped(TESTIMG)
-        self.assertIn(self.AUTHKEYS, files)
-        self.assertEqual(files[self.AUTHKEYS].contents,
+        runinfo = self.assertPrepped(TESTIMG)
+        self.assertIn(self.AUTHKEYS, runinfo.files)
+        self.assertEqual(runinfo.files[self.AUTHKEYS].contents,
                          PUBKEY)
 
     def test_add_multiple_public_keys(self):
@@ -511,9 +534,9 @@ class TestPrep(TestImageBase):
         self.prep_with_public_key(PUBKEY_ONE)
         self.prep_with_public_key(PUBKEY_TWO)
 
-        kernel, files, ssh = self.assertPrepped(TESTIMG)
-        self.assertIn(self.AUTHKEYS, files)
-        self.assertEqual(files[self.AUTHKEYS].contents,
+        runinfo = self.assertPrepped(TESTIMG)
+        self.assertIn(self.AUTHKEYS, runinfo.files)
+        self.assertEqual(runinfo.files[self.AUTHKEYS].contents,
                          PUBKEY_ONE + PUBKEY_TWO)
 
     def test_set_host_keys(self):
@@ -523,16 +546,16 @@ class TestPrep(TestImageBase):
 
         self.callTool(["prep", "--set-host-keys=" + self.HOSTKEYSTAR, TESTIMG])
 
-        kernel, files, ssh = self.assertPrepped(TESTIMG)
+        runinfo = self.assertPrepped(TESTIMG)
         with tarfile.open(self.HOSTKEYSTAR) as tar:
             for member in tar:
                 filespec = os.path.join("/etc/ssh", member.name)
-                self.assertIn(filespec, files)
-                self.assertEqual(files[filespec].mode, member.mode)
-                self.assertEqual(files[filespec].uid, member.gid)
-                self.assertEqual(files[filespec].uid, member.gid)
+                self.assertIn(filespec, runinfo.files)
+                self.assertEqual(runinfo.files[filespec].mode, member.mode)
+                self.assertEqual(runinfo.files[filespec].uid, member.gid)
+                self.assertEqual(runinfo.files[filespec].uid, member.gid)
 
-        initscript = files[self.REGEN_INITSCRIPT]
+        initscript = runinfo.files[self.REGEN_INITSCRIPT]
         self.assertNotIn(b"ssh-keygen", initscript.contents)
 
     @contextlib.contextmanager
@@ -658,13 +681,11 @@ class TestRun(TestImageBase):
     """Check the run action."""
     def test_monitor_quit(self):
         """run and quit using the monitor."""
-        kernel, files, ssh = self.runImage(TESTIMG,
-                                           growmode=self.MAGIC_GROW_MODE_INPUT)
+        self.runImage(TESTIMG, growmode=self.MAGIC_GROW_MODE_INPUT)
 
     def test_with_ssh_port(self):
         """run --with-ssh-port."""
-        kernel, files, ssh = self.runImage(TESTIMG,
-                                           growmode=self.MAGIC_GROW_MODE_SSH)
+        self.runImage(TESTIMG, growmode=self.MAGIC_GROW_MODE_SSH)
 
     def test_with_display(self):
         """run --with-display.  Only checked if DISPLAY is set.
@@ -672,13 +693,13 @@ class TestRun(TestImageBase):
         by code.)"""
         #TODO: Put in a headless xserver of some sort and check the window.
         if "DISPLAY" in os.environ and os.environ["DISPLAY"]:
-            kernel, files, ssh = self.runImage(TESTIMG, options=["--with-display"])
+            self.runImage(TESTIMG, options=["--with-display"])
 
     def test_with_audio(self):
         """run --with-audio.
         (Nothing is really checked except that the switch is accepted and the
         machine boots."""
-        kernel, files, ssh = self.runImage(TESTIMG, options=["--with-audio"])
+        self.runImage(TESTIMG, options=["--with-audio"])
 
 if __name__ == "__main__":
     unittest.main(failfast=True)

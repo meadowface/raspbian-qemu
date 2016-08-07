@@ -28,11 +28,16 @@
 # debugfs - since we want to test that those mechanisms work against images
 # created in other ways.
 #
-# This image is runnable with "raspbian-qemu run" and will simply spew a
-# uuencoded tarball of the filesystem, then pause listening on port 22,
-# spewing any output sent to it.  Used in conjunction with
-# BaseTestImageTest.runImage() in test-raspbian-qemu it allows for testing
-# the run command and the prep commands without booting a full raspbian image.
+# This image is runnable with "raspbian-qemu run" and will by default simply
+# spew some metadata, then a uuencoded tarball of the filesystem, then reboot,
+# thus ending emulation cleanly.
+#
+# This can behavior can be changed by passing in a "growmode" by growing the
+# root partition of the a certain number of sectors.
+#
+# BaseTestImageTest.runImage() in test-raspbian-qemu will set the growmode
+# and interact accordingly.  See there for descriptions of what each growmode
+# does.
 
 printf "Checking sudo access..."
 if ! sudo -v; then
@@ -51,7 +56,7 @@ BUSYBOX_DEB="busybox.deb"
 
 # MAGIC_* variables are used both in this script and parsed by
 # test-raspbian-qemu in TestImageBase for use in the corresponding code there.
-MAGIC_VERSION="1.1.0"
+MAGIC_VERSION="1.2.0"
 MAGIC_MARKER="~~~~ MAGIC MARKER ~~~~"
 MAGIC_PRELOAD="/usr/lib/arm-linux-gnueabihf/libarmmem.so"
 
@@ -115,6 +120,7 @@ case "\\\${growmode}" in
 esac
 
 # Attempt as clean a shutdown as possible.
+echo -e "\n${MAGIC_MARKER}"
 ./busybox umount -r /
 ./busybox reboot -f
 END_INIT
