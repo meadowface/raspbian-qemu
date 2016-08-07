@@ -653,6 +653,8 @@ class TestExtract(TestImageBase):
 
 class TestBuildKernel(TestImageBase):
     """Test the build-kernel action."""
+    SOURCEDIR="test-linux"
+
     def test_build_kernel_no_arg(self):
         """Run build-kernel without a source argument."""
         with self.assertRaises(subprocess.CalledProcessError):
@@ -673,20 +675,18 @@ class TestBuildKernel(TestImageBase):
         with self.assertRaises(subprocess.CalledProcessError):
             self.callTool(["build-kernel", TESTIMG])
 
+    @unittest.skipUnless(os.path.isdir(SOURCEDIR),
+                         "requires %s/" % (SOURCEDIR,))
     def test_build_kernel(self):
         """Build the kernel from a checkout named test-linux.  Easiest
         way is to just symlink test-linux to an existing checkout.
 
         If test-linux does not exist, this test will be skipped.
         """
-        SOURCEDIR="test-linux"
-        if os.path.isdir(SOURCEDIR):
-            if os.path.isfile(raspiqemu.KERNEL_BINARY):
-                os.unlink(raspiqemu.KERNEL_BINARY)
-            self.callTool(["build-kernel", SOURCEDIR])
-            self.assertTrue(os.path.isfile(raspiqemu.KERNEL_BINARY))
-        else:
-            print("\n====!!! Skipping build-kernel since test-linux not present !!!====\n")
+        if os.path.isfile(raspiqemu.KERNEL_BINARY):
+            os.unlink(raspiqemu.KERNEL_BINARY)
+        self.callTool(["build-kernel", self.SOURCEDIR])
+        self.assertTrue(os.path.isfile(raspiqemu.KERNEL_BINARY))
 
 class TestRun(TestImageBase):
     """Check the run action."""
