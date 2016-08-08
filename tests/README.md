@@ -8,17 +8,8 @@ Runing the Tests
 ----------------
 No additional tools are needed to be able to run the test suite as:
 ```
-# Test the kernel build and use that kernel in the rest of the tests.
 $ cd tests
-$ git clone --depth=1 https://github.com/raspberrypi/linux.git
-$ ln -s linux raspbian-qemu-test-linux
-$ ./test-raspbian-qemu TestBuildKernel
-
-# Remove the link that triggers the build-kernel tests so we don't repeat them.
-$ rm raspbian-qemu-test-linux
-
-# Run all other tests.
-./test-raspbian-qemu
+$ make
 ```
 
 ### Test Image
