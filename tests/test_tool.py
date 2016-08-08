@@ -36,6 +36,7 @@ import unittest
 # Prevent next imports from creating __pycache__ directory
 sys.dont_write_bytecode = True
 from test_common import TestImageBase, read_mbr, raspiqemu
+import xwrappers
 
 OTHERIMG  = "other.img"
 
@@ -343,12 +344,18 @@ class TestRun(TestImageBase):
         self.runImage(self.TESTIMG, growmode=self.MAGIC_GROW_MODE_SSH)
 
     def test_with_display(self):
-        """run --with-display.  Only checked if DISPLAY is set.
-        (It's up to test runner to confirm a window pops up, it's not checked
-        by code.)"""
-        #TODO: Put in a headless xserver of some sort and check the window.
-        if "DISPLAY" in os.environ and os.environ["DISPLAY"]:
-            self.runImage(self.TESTIMG, options=["--with-display"])
+        """run --with-display."""
+        with xwrappers.xvfb():
+            with tempfile.NamedTemporaryFile() as log:
+                with xwrappers.xtrace(log.name) as display:
+                    self.runImage(self.TESTIMG, options=["--with-display"])
+                for line in log:
+                    if b"ChangeProperty" in line:
+                        if b"WM_NAME" in line:
+                            if b"QEMU" in line:
+                                break
+                else:
+                    self.assertTrue(False)
 
     def test_with_audio(self):
         """run --with-audio.
