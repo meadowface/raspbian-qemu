@@ -102,6 +102,16 @@ def saved_display():
         else:
             old_display.set()
 
+def have_xvfb():
+    """Returns True if Xvfb is installed and runnable."""
+    try:
+        subprocess.check_call(["Xvfb", "-help"],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
 @contextlib.contextmanager
 def xvfb(options=("-screen", "0", "1024x768x24")):
     """Context manager to run things against a Xvfb instance.  Restoring the
@@ -181,6 +191,16 @@ def linux_unix_domain_sockets(pid=None):
         else:
             result = []
     return result
+
+def have_xtrace():
+    """Returns True if xtrace is installed and runnable."""
+    try:
+        subprocess.check_call(["xtrace", "--help"],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
 
 @contextlib.contextmanager
 def xtrace(outfile):

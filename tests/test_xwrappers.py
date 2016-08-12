@@ -161,4 +161,8 @@ class TestXTrace(TestDISPLAYBase):
             self.assertIn(b"lsb-first", log.read())
 
 if __name__ == "__main__":
+    no_xvfb   = "" if xwrappers.have_xvfb() else "Xvfb not installed."
+    no_xtrace = "" if xwrappers.have_xtrace() else "xtrace not installed."
+    if no_xvfb or no_xtrace:
+        sys.exit(no_xvfb + " " + no_xtrace + " Aborting.")
     unittest.main(failfast=True)

@@ -12,6 +12,8 @@ $ cd tests
 $ make
 ```
 
+> If [Xvfb](https://en.wikipedia.org/wiki/Xvfb) and [xtrace](https://alioth.debian.org/projects/xtrace/) are both installed, then the code will test the `--with-display` switch to `run`, otherwise that test is skipped.
+
 ### Test Image
 
 Most of the test suite does not use a full Raspbian image, but rather a minimal image created specifically for testing.  This image requires root privileges to create, and is small, so it is included in the repo as [test.img.gz](test.img.gz).  **Since it is included already you do not need to make it to run the test suite.** If you want to alter or re-create the image, use the included [make-test-image](make-test-image) script, which requires the following in addition to the requirements of the tool:

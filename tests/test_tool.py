@@ -343,6 +343,8 @@ class TestRun(TestImageBase):
         """run --with-ssh-port."""
         self.runImage(self.TESTIMG, growmode=self.MAGIC_GROW_MODE_SSH)
 
+    @unittest.skipUnless(xwrappers.have_xvfb(), "requires Xvfb")
+    @unittest.skipUnless(xwrappers.have_xtrace(), "requires xtrace")
     def test_with_display(self):
         """run --with-display."""
         with xwrappers.xvfb():
