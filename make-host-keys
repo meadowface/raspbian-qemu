@@ -24,6 +24,9 @@
 # Create a tar file with actual host keys it.  Provided mostly as an example
 # of what the tar file should look like.  Configuration management systems
 # provide much better ways of generating host keys.
+#
+# Requires ssh-keygen from OpenSSH (http://www.openssh.com/) which is likely
+# already installed.
 
 set -u
 
