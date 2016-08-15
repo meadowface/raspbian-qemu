@@ -1,8 +1,8 @@
 Raspbian QEMU Tool Tests
 ========================
-[//]: # (Home: https://github.com/meadowface/raspbian-qemu/tests)
+[//]: # (https://github.com/meadowface/raspbian-qemu/tests)
 
-A full `unittest`-based test-suite for raspbian-qemu.
+A full `unittest`-based test-suite for `raspbian-qemu`.
 
 Runing the Tests
 ----------------

@@ -1,8 +1,8 @@
 Raspbian QEMU Tool
 ==================
-[//]: # (Home: https://github.com/meadowface/raspbian-qemu)
+[//]: # (https://github.com/meadowface/raspbian-qemu)
 
-Handy tool for non-privileged manipulation and [qemu-emulation](http://qemu.org) of [Raspbian](http://raspbian.org/) images.  Allows for automated manipulating and running the images without root, and easy patching and compiling of the kernel. (TODO: bad wording)
+Handy Linux tool for non-privileged manipulation and [qemu-emulation](http://qemu.org) of [Raspbian](http://raspbian.org/) images. Easily manipulate Raspbian SD card images, compile an emulation kernel from source, and run them in emulation.
 
 Quick Start
 -----------
@@ -10,7 +10,7 @@ For a Debian-based system (tested with Ubuntu 16.04):
 
 ```
 # Install requirements, this only needs to be done once and is the only
-# thing that requires root.
+# thing that requires root until writing the image to an SD card.
 $ sudo apt install python3 patch make gcc-arm-linux-gnueabihf gcc bc parted e2fsprogs qemu-system-arm git
 
 # Build a kernel binary.
@@ -24,8 +24,17 @@ $ wget -qO- https://downloads.raspberrypi.org/raspbian_lite_latest | funzip >ras
 # Prep and run work.img.
 $ ./raspbian-qemu prep raspbian-jessie-lite.img work.img
 $ ./raspbian-qemu run --with-ssh-port=8022 work.img
+
+# Use ansible, puppet, chef, or whatever to install and configure whatever
+# software is needed, run tests, etc...
+
+# After the emulated Raspbian boots, log in on the console in the terminal
+# or `ssh -p 8022 pi@127.0.0.1`. To end emulation login into Raspbian and reboot it.
+
+# Unprep the image and burn it to an SD card for deployment to actual hardware.
+$ ./raspbian-qemu unprep work.img
+$ sudo dd if=work.img of=/dev/mmcblk0 bs=4M
 ```
-After the emulated Raspbian boots, log in on the console in the terminal or `ssh -p 8022 pi@127.0.0.1`. To end emulation login into Raspbian and reboot it.
 
 Requirements
 ------------
@@ -55,7 +64,10 @@ Installation
 
 Usage
 -----
-1. Build a kernel.  You only need to do this once.  On a modern laptop (mid-2016) it takes about 3 minutes to compile.  This places a kernel image into the file `kernel-qemu` in the current directory.  Errors here are most likely caused by missing requirements (See above). The kernel is built from a cleaned checkout each time. (TODO: bad wording)
+1. Build a kernel.  *You only need to do this once.*  On a modern laptop (mid-2016) it takes about 3 minutes to compile.  This places a kernel image into the file `kernel-qemu` in the current directory.  Errors here are most likely caused by missing requirements (See above).
+
+   > NOTE: The build-kernel action will clean the build directory every time
+   > it is run.  So this isn't the best way to do kernel development.
 
    ```
    $ git clone --depth=1 https://github.com/raspberrypi/linux.git
@@ -75,6 +87,20 @@ Usage
    ```
    $ ./raspbian-qemu run work.img
    ```
+
+   > NOTE about the emulation: `qemu-system-arm` is being used to emulate the
+   > `versatilepb` machine which is **limited to 256MB of RAM** even in
+   > emulation. This is currently (mid-2016) the most stable and widely-
+   > available emulation, utilizing QEMU v2.5.0. The QEMU project has recently
+   > released v2.6.0 and v2.7.0rc1 which have initial support for a `raspi2`
+   > machine type.  In experiments, that is not yet stable enough. As that
+   > progresses this tool might be updated to have a mode that uses that as
+   > well. See the links below in the References section for more information
+   > on the new `raspi2` machine type in QEMU.
+   > The current configuration of QEMU used by this tool is aimed to be
+   > the most stable and widely available.
+
+
 1. Make any changes to the system you want, all will persist within the image.  You can configure ssh (see below) and then use configuration management tools such as [ansible](https://www.ansible.com/) or [puppet](https://puppet.com/) to automatically configure the system.
 1. If you then want to burn the image into an SD card and run it in actual Raspberry Pi hardware, first `unprep` the image.
 
@@ -132,7 +158,7 @@ $ ./raspbian-qemu extract version1.img hostkeys keys.tar
 $ ./raspbian-qemu prep --set-host-keys=keys.tar version2.img
 ```
 
-If you'd like to create new host keys without booting first, then you can use the included `make-host-keys` script.  It is not part of the tool because it is just an example of how to create a tar file with proper permissions and really configuration management systems are a better way to manage host keys.
+If you'd like to create new host keys without booting first, then you can use the included [make-host-keys](make-host-keys) script.  It is not part of the main tool because it is just an example of how to create a tar file with proper permissions and really configuration management systems are a better way to manage host keys.
 ```
 $ ./make-host-keys newkeys.tar
 $ ./raspbian-qemu prep --set-host-keys=newkeys.tar work.img
@@ -157,7 +183,7 @@ A full `unittest`-based test-suite is included in the [tests](tests) directory.
 Problem & Principles
 --------------------
 > I want an easy and automated method for running Raspbian images in QEMU
-> without requiring root or trusting random binaries.
+> without requiring root or trusting un-vetted binaries.
 
 There are many tutorials out there (some linked [below](#user-content-similar-projects--inspirations)) but they almost all require
 many manual steps and root permissions to manipulate the images.
@@ -170,19 +196,37 @@ Below are the (arbitrary) principles applied to this tool:
 * **Full system emulation.**  Not just running an arm executable in a glorified chroot, but having the Raspbian system boot up as normally as possible.
 * **Standalone** script.
 * Usable for **build automation.**  No unavoidable prompts.
-* No downloading of kernels from random sources.
+* No downloading of kernel binaries from un-vetted sources.
 * Ability to round-trip image to an SD card for use on actual Raspberry Pi hardware.
 * **Headless support** so it can be deployed in the cloud.
 
 Similar Projects & Inspirations
 -------------------------------
 
-* TODO
+* The start of automation [here](https://github.com/dhruvvyas90/qemu-rpi-kernel/blob/master/tools/build-kernel-qemu) is what inspired fully automating the procedure. The [related post](http://dhruvvyas.com/blog/?p=49) is the by far best set of instructions I found among [many](https://www.unixmen.com/emulating-raspbian-using-qemu/) [other](http://sentryytech.blogspot.com/2013/02/faster-compiling-on-emulated-raspberry.html) [good](http://theo.cc/blog/2015/10/14/Build-Raspberry-Pi-Linux-Kernel-for-QEMU/) ones.
+* [This set of instructions](https://gist.github.com/stefanozanella/4608873) for running various raspi things in `qemu-system-arm` is what finally made it click in my head that the kernel parameter `panic` and the qemu parameter `-no-reboot` could work together.
+* Some interesting run-Raspberry-Pi-code-in-Docker|chroot|container projects. This is an intriguing idea for things like build farms and maybe some testing, but doesn't work directly with the SD card images or boot the system similarly enough to actual hardware.  So I didn't dig too deeply.
+  * http://www.instructables.com/id/Uniform-Development-by-Docker-QEMU/?ALLSTEPS
+  * http://blog.hypriot.com/post/heavily-armed-after-major-upgrade-raspberry-pi-with-docker-1-dot-5-0/
+  * https://github.com/resin-io-library/resin-rpi-raspbian
+  * https://lionfacelemonface.wordpress.com/2015/04/18/raspberry-pi-build-environment-in-no-time-at-all/
+  * https://resin.io/blog/building-arm-containers-on-any-x86-machine-even-dockerhub/
+* If just compiling something with no other release engineering is your goal, then this [Raspbian pbuilderrc](https://github.com/openBergisch/raspbian-pbuilder-draft) is worth looking at.
 
 References
 ----------
 
-* TODO
+* [Discussion](https://bugs.launchpad.net/ubuntu/+source/rootstock/+bug/570588) of the 256M memory limit for the `versatilepb` machine in QEMU.  A [suggestion to add swap](https://www.raspberrypi.org/forums/viewtopic.php?f=53&t=8649) to help mitigate it.
+* Raspberry Pi [kernel source](https://github.com/raspberrypi/linux)
+* Official [Raspberry Pi Kernel Build documentation](https://www.raspberrypi.org/documentation/linux/kernel/building.md).
+* [How to figure out the kernel git commit](http://lostindetails.com/blog/post/Compiling-a-kernel-module-for-the-raspberry-pi-2) from a system binary.  Generally a nice source for information on compiling Raspberry Pi kernels.
+* Feb 2016 `raspi2` machine in QEMU status from the [QEMU mailing list](http://lists.nongnu.org/archive/html/qemu-devel/2016-02/msg05684.html) and [Raspberry Pi forums](https://www.raspberrypi.org/forums/viewtopic.php?f=72&t=26561&start=125).
+* What looks like the [initial QEMU raspi2 machine work](https://github.com/0xabu/qemu).
+* [Some wrapping](https://github.com/simonpoole1/raspbian-live-build) around using the `raspi2` machine in QEMU.  The [qemu-run](https://github.com/simonpoole1/raspbian-live-build/blob/master/qemu-run) in particular script has a lot of very specific kernel hardware args.
+* Reference for [setting audio driver](https://wiki.archlinux.org/index.php/PulseAudio#QEMU) in QEMU.
+* [Good explanation](https://kashyapc.com/2016/02/11/qemu-command-line-behavior-of-serial-stdio-vs-serial-monstdio/) of `-serial mon:stdio` in QEMU.
+* Using the [QEMU Monitor](https://en.wikibooks.org/wiki/QEMU/Monitor).
+* The Arch Linux wiki has a [great page on QEMU](https://wiki.archlinux.org/index.php/QEMU).
 
 License
 -------
@@ -192,9 +236,9 @@ Future Thoughts
 ---------------
 These are thoughts for later.  They may or may not be implemented.
 
-* Version test image and test that it matches the test script in tests.
 * `--with-http[s]` or a more generic `--with-port-redir` switch.
-* Injecting a `config.txt` into the first partition.  It's not used at all during emulation but would be handy for prepping images for runs on actual hardware.
+* Injecting a `config.txt` into the first partition.  It's not used at all during emulation but would be handy for prepping images for runs on actual hardware. Note that this could be done with a configuration management tool since the emulated system mounts the boot partition.
 * Store kernel in a `~/.raspbian-qemu` directory.
 * `--noclean` switch for `build-kernel`.
 * Use `-` for stdin in `image`, `--add-public-key`, and `--set-host-keys`
+* A switch for `run` which would add `-net dump` to the emulation command to packet dump the network traffic. (http://blog.vmsplice.net/2011/04/how-to-capture-vm-network-traffic-using.html)

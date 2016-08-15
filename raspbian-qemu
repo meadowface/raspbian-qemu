@@ -376,7 +376,8 @@ def run_image(image, display, audio, ssh_port, promptfunc):
             # As of mid-2016 qemu does not have a direct raspi machine.  This
             # is the closest to it with the caveat that the versatilepb
             # hardware has a max of 256M of RAM, so we're limited to that for
-            # now.
+            # now.  The kernel must be patched to allow the arm1176 CPU to
+            # be configured with the versatilepb board.  See below.
             "-machine", "versatilepb",
             "-cpu", "arm1176",
             "-m", "256",
@@ -469,6 +470,7 @@ def fetch_arm_patch(cachefilespec):
       http://thoronir.net/raspi-dev/linux-arm.patch
       https://gist.github.com/flatbird/fafb233f2843e99427e8
       https://www.raspberrypi.org/forums/viewtopic.php?t=23046
+      https://github.com/johnlane/rpi-utils/tree/master/kernel
       https://web.archive.org/web/20120626224432/http://xecdesign.com/compiling-a-kernel/
       https://github.com/rimmington/qemu-rpi-kernel/commit/162fbe91a1d1b11e34a3af9326e06816aac67e1f
     """
