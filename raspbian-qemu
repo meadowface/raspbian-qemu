@@ -653,34 +653,37 @@ def main(argv):
 
     action_parser = parser.add_subparsers(dest="action",
                                           title="actions",
-                                          help="action help")
+                                          help="Specific action to perform")
     # http://bugs.python.org/issue9253#msg186387
     action_parser.required = True
 
-    extract_parser = action_parser.add_parser("extract", help="Extract artifacts from a Raspbian image")
+    extract_parser = action_parser.add_parser("extract", help="Extract artifacts from a Raspbian image.")
     extract_parser.add_argument("image", help="Raspbian image to extract from.")
     extract_parser.add_argument("what", help="What to extract from the image.",
                                 choices=("hostkeys",))
     extract_parser.add_argument("dest", help="Optional name of file to extract to.")
 
-    prep_parser = action_parser.add_parser("prep", help="prep help")
+    prep_parser = action_parser.add_parser("prep", help="Prepare a Raspbian image to run under emulation.")
     prep_parser.add_argument("image", help="Raspbian image to prep to run in qemu.")
     prep_parser.add_argument("dest", nargs="?", help="Optional name of new image.")
-    prep_parser.add_argument("--grow-root", help="How much space to add to the root partition.")
+    prep_parser.add_argument("--grow-root", help="How much space to add to the root partition. (can use K,M,G suffixes)")
     prep_parser.add_argument("--add-public-key", help="Add a public key to user pi's authorized_keys")
     prep_parser.add_argument("--set-host-keys", help="Inject a set of hosts keys from a tar file")
 
-    unprep_parser = action_parser.add_parser("unprep", help="unprep help")
+    unprep_parser = action_parser.add_parser("unprep", help='Unprep a previous-prepped Raspbian image so it can be run on actual hardware.')
     unprep_parser.add_argument("image", help="Name of image to unprep to run on actual hardware.")
     unprep_parser.add_argument("dest", nargs="?", help="Optional name of new image.")
 
-    run_parser = action_parser.add_parser("run", help="run help")
+    run_parser = action_parser.add_parser("run", help="Run a prepped Raspbian image under emulation.")
     run_parser.add_argument("image", help="Name of image to run")
-    run_parser.add_argument("--with-display", action="store_true")
-    run_parser.add_argument("--with-audio", action="store_true")
-    run_parser.add_argument("--with-ssh-port", type=int)
+    run_parser.add_argument("--with-display", action="store_true",
+                            help="Do not suppress the creation of a graphical window.")
+    run_parser.add_argument("--with-audio", action="store_true",
+                            help="Do not suppress audio support in QEMU.")
+    run_parser.add_argument("--with-ssh-port", type=int,
+                            help="Redirect localhost:port to the emulated machine's ssh port.")
 
-    kernel_parser = action_parser.add_parser("build-kernel", help="run help")
+    kernel_parser = action_parser.add_parser("build-kernel", help="Build an emulation kernel from source.")
     kernel_parser.add_argument("source", help="path of https://github.com/raspberrypi/linux.git checkout")
 
     args = parser.parse_args(argv[1:])
