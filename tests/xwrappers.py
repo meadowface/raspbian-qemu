@@ -118,7 +118,7 @@ def xvfb(options=("-screen", "0", "1024x768x24")):
     original X environment (if any) after context exit.
     """
     with saved_display():
-        fd_read, fd_write = os.pipe2(os.O_NONBLOCK)
+        fd_read, fd_write = os.pipe()
 
         cmd = ["Xvfb",
                "-displayfd", str(fd_write),
@@ -129,19 +129,9 @@ def xvfb(options=("-screen", "0", "1024x768x24")):
                               stderr=subprocess.DEVNULL,
                               pass_fds=[fd_write]) as xvfb:
             try:
-                line = bytearray()
-                #TODO: This could wait forever, in which situations?
-                while True:
-                    try:
-                        inbyte = os.read(fd_read, 1)
-                        if inbyte == b"\n":
-                            break
-                        else:
-                            line += inbyte
-                    except BlockingIOError:
-                        if xvfb.poll() is not None:
-                            break
-                        time.sleep(0.1)
+                os.close(fd_write)
+                with open(fd_read, "rb", buffering=0) as displayfile:
+                    line = displayfile.readline()
 
                 if xvfb.poll() is None:
                     display = Display(int(line))
@@ -168,10 +158,18 @@ def linux_unix_domain_sockets(pid=None):
     if pid is None:
         result = socket_map().values()
     else:
+        # The process can be opening and closing files as we're checking, so
+        # retry a few times, always re-reading the directory listing and the
+        # sockets maps if we run into a socket not being in the map or a
+        # permissions error.
+        #
+        # If after 3 tries we're still getting problems, then return an empty
+        # result to the caller, who is likely looking for a particular entry
+        # and will call us again or error out.
         fdpath = "/proc/%d/fd" % (pid,)
-        result = []
         for attempt in range(3):
             try:
+                result = []
                 sockets = socket_map()
                 for entry in os.listdir(fdpath):
                     try:
@@ -185,8 +183,6 @@ def linux_unix_domain_sockets(pid=None):
                         pass
                 break
             except (KeyError, PermissionError) as e:
-                #TODO: There are gobs of races...explain why we do it this way...
-                result = []
                 continue
         else:
             result = []
@@ -212,7 +208,7 @@ def xtrace(outfile):
         if not upstream_display:
             raise ValueError("No upstream display")
 
-        for display in (Display(d) for d in range(1024)):
+        for display in (Display(d) for d in range(64)):
             # xtrace itself is not polite, so be polite on its behalf and
             # don't run it if we have any clues that a server might be
             # listening on this display.  IF we don't check, and it's under
@@ -252,10 +248,15 @@ def xtrace(outfile):
                             display.set()
                             yield display
                             break
-                        time.sleep(0.01)
+
+                        # If the process hasn't died, sleep before we check
+                        # for the socket again.
+                        if xtrace.poll() is None:
+                            time.sleep(0.01)
                     else:
-                        # xtrace process died, so continue the outer for loop
-                        # to trace another display.
+                        # xtrace process died before it was ever ready, so
+                        # continue the outer for loop to trace another
+                        # display.
                         continue
 
                     # We happily found a display that worked and yielded, so

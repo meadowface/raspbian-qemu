@@ -44,17 +44,28 @@ from xwrappers import (Display,
                       )
 
 class TestDISPLAYBase(unittest.TestCase):
-    """Base test class which saves/restores the DISPLAY environment variable
-    around each test.  Much like saved_display(), but since that's being
-    tested too..."""
+    """Base test class which gets rid of the DISPLAY environment variable
+    before each test so we never mess with a developer's X-Session and can
+    guarantee everything will run headless."""
     def setUp(self):
-        self.saved_display = os.environ.get("DISPLAY")
+        os.environ.pop("DISPLAY", None)
 
-    def tearDown(self):
-        if self.saved_display is None:
-            del os.environ["DISPLAY"]
-        else:
-            os.environ["DISPLAY"] = self.saved_display
+    def assertXServer(self):
+        """Assert that we can connect to an X-Server that is listening
+        on the display set in the DISPLAY environment variable."""
+        display = Display.get()
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+                sock.settimeout(1)
+                sock.connect("/tmp/.X11-unix/X%d" % (int(display)))
+                sock.sendall(b"l\0\x0b\0\0\0\0\0\0\0\0\0")
+                #              ^-- little-endian
+                #                 ^^^^--- protocol version (11)
+                response = sock.recv(8, socket.MSG_WAITALL)
+                self.assertEqual(len(response), 8)
+                self.assertNotEqual(response[0], 0)  # 0 = Failure
+        except Exception as e:
+            raise AssertionError("No X-Server") from e
 
 class TestDisplay(TestDISPLAYBase):
     """Test the Display str derivative class."""
@@ -83,6 +94,13 @@ class TestDisplay(TestDISPLAYBase):
         os.environ["DISPLAY"] = ":8"
         self.assertEqual(os.environ[Display.DISPLAY], Display.get())
 
+    def test_get_no_display(self):
+        self.assertEqual(None, Display.get())
+
+    def test_get_empty_display(self):
+        os.environ["DISPLAY"] = ""
+        self.assertEqual(os.environ[Display.DISPLAY], Display.get())
+
 class TestSavedDisplay(TestDISPLAYBase):
     """Test the saved_display context manager."""
     def test_basic_save(self):
@@ -93,7 +111,6 @@ class TestSavedDisplay(TestDISPLAYBase):
         self.assertEqual(os.environ["DISPLAY"], "abc:1")
 
     def test_no_display_env(self):
-        del os.environ["DISPLAY"]
         with saved_display() as old_display:
             self.assertIsNone(old_display)
             os.environ["DISPLAY"] = "123:4"
@@ -113,11 +130,12 @@ class TestXvfb(TestDISPLAYBase):
         with xvfb() as display:
             self.assertEqual(display, os.environ["DISPLAY"])
             self.assertNotEqual(display, ":88")
+            self.assertXServer()
 
     def test_bad_options(self):
         with self.assertRaises(subprocess.CalledProcessError):
             with xvfb(options=["-xxx"]) as display:
-                pass
+                self.assertTrue(False, "We should never get here")
 
     def test_good_options(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -125,6 +143,7 @@ class TestXvfb(TestDISPLAYBase):
                 # A file in this directory means the option got through.
                 self.assertTrue(os.path.exists(os.path.join(tmpdir,
                                                             "Xvfb_screen0")))
+                self.assertXServer()
 
 class TestLinuxUnixDomainSockets(unittest.TestCase):
     """Test the utility function linux_unix_domain_sockets()"""
@@ -149,16 +168,16 @@ class TestXTrace(TestDISPLAYBase):
     """Test the xtrace context manager."""
     def test_simple(self):
         with tempfile.NamedTemporaryFile() as log:
-            with xtrace(log.name) as display:
-                # Send an X connect.  Must recv the first 8 bytes back for
-                # xtrace to log.
-                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                    sock.connect("/tmp/.X11-unix/X%d" % (int(display)))
-                    sock.sendall(b"l\0\x0b\0\0\0\0\0\0\0\0\0")
-                    #              ^-- little-endian
-                    #                 ^^^^--- protocol version (11)
-                    sock.recv(8)
+            with xvfb() as upstream_display, xtrace(log.name) as display:
+                self.assertEqual(display, os.environ["DISPLAY"])
+                self.assertNotEqual(display, upstream_display)
+                self.assertXServer()
             self.assertIn(b"lsb-first", log.read())
+
+    def test_bad_outfile(self):
+        with self.assertRaises(Exception):
+            with xvfb(), xtrace(".") as display:
+                self.assertTrue(False, "We should never get here")
 
 if __name__ == "__main__":
     no_xvfb   = "" if xwrappers.have_xvfb() else "Xvfb not installed."
