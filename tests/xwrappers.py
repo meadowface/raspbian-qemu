@@ -266,10 +266,3 @@ def xtrace(outfile):
                     xtrace.kill()
         else:
             raise Exception("No reasonable free display found.")
-def test():
-    """Module tests."""
-    import doctest
-    print(doctest.testmod())
-
-if __name__ == "__main__":
-    test()
