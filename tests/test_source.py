@@ -219,7 +219,7 @@ class TestSource(unittest.TestCase):
         # is included as a comment blob at the top of the file.
         for filename, contents in sources():
             # Ignore non-code files.
-            if filename.endswith((".gz", ".tar", ".md", "LICENSE")):
+            if filename.endswith((".gz", ".tar", ".md", "LICENSE", ".gitignore")):
                 continue
 
             try:
