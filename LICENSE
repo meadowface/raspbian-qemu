@@ -20,9 +20,14 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-The binary test.img.gz includes a binary copy of busybox (https://www.busybox.net/) fetched from the Raspbian Archive at https://archive.raspbian.org/.  It is released under the GPL v2 as outlined at https://www.busybox.net/license.html.  The source for that binary is also available
-from the Raspbian Archive at https://archive.raspbian.org/.  The specific
-version fetched is included in the make-test-image script in this repository.
 
-Busybox is not included as part of this software, but rather as a tool used in
-the test suite.
+The binary tests/test.img.gz includes a binary copy of busybox
+(https://www.busybox.net/) fetched from the Raspbian Archive at
+https://archive.raspbian.org/.  It is released under the GPL v2 as outlined
+at https://www.busybox.net/license.html.  The source for that binary is also
+available from the Raspbian Archive at https://archive.raspbian.org/.  The
+specific version fetched is included in the tests/make-test-image script in
+this repository.
+
+Busybox is not included as part of this software, but rather as a tool used
+in the test suite.
