@@ -6,12 +6,15 @@ Handy Linux tool for non-privileged manipulation and [qemu-emulation](http://qem
 
 Quick Start
 -----------
-For a Debian-based system (tested with Ubuntu 16.04):
+The below will work for many Debian-based systems.  Tested with **Ubuntu 16.04**, **Debian stretch (mid-2016)**, and **Debian sid (mid-2016)**.  **Debian jessie** requires [more effort to get the cross-compiler installed](README-jessie.md).
 
 ```
-# Install requirements, this only needs to be done once and is the only
-# thing that requires root until writing the image to an SD card.
-$ sudo apt install python3 patch make gcc-arm-linux-gnueabihf gcc bc parted e2fsprogs qemu-system-arm git
+# Install cross-compiler. This only needs to be done once.
+# See above if you are running Debian jessie.
+$ sudo apt install gcc-arm-linux-gnueabihf
+
+# Install other requirements, this only needs to be done once.
+$ sudo apt install python3 patch make gcc bc parted e2fsprogs qemu-system-arm git
 
 # Build a kernel binary.
 $ git clone --depth=1 https://github.com/raspberrypi/linux.git
@@ -44,7 +47,7 @@ in modern distributions, many are likely already installed on your system.
 1. [python >= 3.3](https://www.python.org/)
 1. [GNU patch](https://www.gnu.org/software/patch/) (for build-kernel)
 1. [GNU make](https://www.gnu.org/software/make/) (for build-kernel)
-1. [gcc and gcc/ARM hard-float cross-compiler](https://gcc.gnu.org/) (for build-kernel)
+1. [gcc and gcc/ARM hard-float cross-compiler](https://gcc.gnu.org/) (for build-kernel) ([not fully packaged on Debian jessie](README-jessie.md))
 1. [GNU bc](http://ftp.gnu.org/gnu/bc/) (for build-kernel)
 1. [GNU parted](https://www.gnu.org/software/parted/)
 1. `resize2fs`, `e2fsck`, and `debugfs` from [e2fsprogs](http://e2fsprogs.sourceforge.net/)
@@ -54,7 +57,8 @@ in modern distributions, many are likely already installed on your system.
 On a Debian-based systems (including Ubuntu), you can install the requirements
 with:
 ```
-  $ sudo apt install python3 patch make gcc-arm-linux-gnueabihf gcc bc parted e2fsprogs qemu-system-arm git
+$ sudo apt install gcc-arm-linux-gnueabihf    # see above for Debian jessie.
+$ sudo apt install python3 patch make gcc bc parted e2fsprogs qemu-system-arm git
 ```
 
 Installation
