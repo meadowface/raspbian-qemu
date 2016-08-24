@@ -154,7 +154,12 @@ class TestImageBase(unittest.TestCase):
         if os.path.exists(self.ROOT_IMG):
             os.unlink(self.ROOT_IMG)
 
-        subprocess.check_output([TOOL] + args, stderr=subprocess.STDOUT)
+        cmd = [TOOL]
+        # Assume any time the trace function is set it's coverage and make
+        # sure to spawn the tool under coverage as well.
+        if sys.gettrace():
+            cmd = ["python3-coverage", "run", "--parallel-mode"] + cmd
+        subprocess.check_output(cmd + args, stderr=subprocess.STDOUT)
 
         # Now make sure root.img was created if request but not if it wasn't.
         # If created correctly, check its state and then clean it up.

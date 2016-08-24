@@ -14,6 +14,9 @@ $ make
 
 > If [Xvfb](https://en.wikipedia.org/wiki/Xvfb) and [xtrace](https://alioth.debian.org/projects/xtrace/) are both installed, then the code will test the `--with-display` switch to `run`, otherwise that test is skipped.
 
+### Coverage
+The [Makefile](Makefile) target `coverage` will use a system-wide version of [coverage.py](https://bitbucket.org/ned/coveragepy) to generate a coverage report in `tests/htmlcov/index.html`.  By default it assumes a system-wide installed coverage.py of at least v3.7.1 which is included in Debian >= jessie and and Ubuntu >= trusty as the package `python3-coverage`.  To change this, edit the `COVERAGE_TOOL` variable in the [Makefile](Makefile).
+
 ### Test Image
 
 Most of the test suite does not use a full Raspbian image, but rather a minimal image created specifically for testing.  This image requires root privileges to create, and is small, so it is included in the repo as [test.img.gz](test.img.gz).  **Since it is included already you do not need to make it to run the test suite.** If you want to alter or re-create the image, use the included [make-test-image](make-test-image) script, which requires the following in addition to the requirements of the tool:
