@@ -38,7 +38,7 @@ import tempfile
 import time
 import urllib.request
 
-__version__ = "0.0.9"
+__version__ = "0.0.10"
 
 PARTED    = "parted"            # partition editor
 RESIZE2FS = "resize2fs"         # file system resizier
@@ -135,6 +135,9 @@ def data_copy(source, dest, source_offset=0, dest_offset=0, count=None):
 class FilesystemImage:
     """Wrapper around debugfs to expose operations on an ext[234] filesystem
     image."""
+    IFLAGS_DIRECTORY    = 0x4000
+    IFLAGS_REGULAR_FILE = 0x8000
+    IFLAGS_PERMISSIONS  = 0x01FF
     def __init__(self, image):
         """Create wrapper for image file image."""
         self.image = image
@@ -156,14 +159,14 @@ class FilesystemImage:
             ignore, inode, iflags, uid, gid, filename, size, ignore = line.split(b"/", maxsplit=7)
             file = tarfile.TarInfo(filename.decode())
             iflags = int(iflags, 8)
-            if iflags & 0x8000:
+            if iflags & self.IFLAGS_REGULAR_FILE:
                 file.type = tarfile.REGTYPE
-            elif iflags & 0x4000:
+            elif iflags & self.IFLAGS_DIRECTORY:
                 file.type = tarfile.DIRTYPE
             else:
                 print("%4X" % (iflags,))
                 raise NotImplementedError
-            file.mode = iflags & 0x01FF
+            file.mode = iflags & self.IFLAGS_PERMISSIONS
             file.uid = int(uid)
             file.gid = int(gid)
             if size:
@@ -182,9 +185,9 @@ class FilesystemImage:
             debugfs_cmds.append("set_inode_field " + " ".join([filespec, "gid", str(gid)]))
         if mode is not None:
             if directory:
-                i_mode = 0x4000 | mode
+                i_mode = self.IFLAGS_DIRECTORY | mode
             else:
-                i_mode = 0x8000 | mode
+                i_mode = self.IFLAGS_REGULAR_FILE | mode
             debugfs_cmds.append("set_inode_field " + " ".join([filespec, "mode", str(i_mode)]))
 
         if debugfs_cmds:
@@ -308,7 +311,8 @@ def prep(source_image, dest_image, grow_root, public_key, hosts_keys, keep_root)
 
         if public_key is not None:
             AUTHORIZED_KEYS = "/home/pi/.ssh/authorized_keys"
-            new_key = open(public_key, "rb").read()
+            with open(public_key, "rb") as public_key_file:
+                new_key = public_key_file.read()
             keys = rootfs.cat(AUTHORIZED_KEYS)
             if new_key not in keys:
                 keys += new_key
@@ -475,7 +479,8 @@ def fetch_arm_patch(cachefilespec):
       https://github.com/rimmington/qemu-rpi-kernel/commit/162fbe91a1d1b11e34a3af9326e06816aac67e1f
     """
     if os.path.exists(cachefilespec):
-        return open(cachefilespec, "rb").read()
+        with open(cachefilespec, "rb") as cachefile:
+            return cachefile.read()
     else:
         with urllib.request.urlopen(ARM_PATCH_URL) as response:
             patch = response.read()
